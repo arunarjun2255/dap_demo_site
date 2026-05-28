@@ -1,0 +1,239 @@
+/* Design System & Global Styles for Veridian Core Banking */
+
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&display=swap');
+
+:root {
+  /* Colors - Light Mode */
+  --primary: #06402B;        /* Veridian Green */
+  --primary-light: #095F41;  /* Light Veridian */
+  --primary-dark: #032116;   /* Dark Forest */
+  --primary-rgb: 6, 64, 43;
+  
+  --accent: #E2B25B;         /* Golden/Amber accent */
+  --accent-light: #F0D59E;
+  
+  --success: #0E835C;        /* Emerald Green */
+  --success-bg: #E8F5E9;
+  
+  --danger: #C2410C;         /* Orange-red Gross NPA indicator */
+  --danger-bg: #FDF2E9;
+  
+  --bg-app: #F4F6F5;         /* Muted off-white */
+  --bg-card: #FFFFFF;        /* Pure white cards */
+  --bg-sidebar: #053322;     /* Sidebar dark green */
+  
+  --text-main: #1D2321;      /* Deep gray-green */
+  --text-muted: #5F6B66;     /* Secondary/muted */
+  --text-white: #FFFFFF;
+  
+  --border: #E2E6E4;         /* Soft borders */
+  --border-focus: #06402B;
+  
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.05);
+  --shadow-lg: 0 10px 24px rgba(0, 0, 0, 0.08);
+  
+  --radius-sm: 6px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  
+  /* Fonts */
+  --font-sans: 'Outfit', sans-serif;
+  --font-serif: 'Playfair Display', Georgia, serif;
+  
+  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+}
+
+/* Dark Mode Overrides */
+.dark-theme {
+  --primary: #10B981;        /* Light emerald for dark theme accents */
+  --primary-light: #34D399;
+  --primary-dark: #06402B;
+  --primary-rgb: 16, 185, 129;
+  
+  --accent: #E2B25B;
+  --accent-light: #F0D59E;
+  
+  --success: #34D399;
+  --success-bg: rgba(16, 185, 129, 0.15);
+  
+  --danger: #F97316;
+  --danger-bg: rgba(249, 115, 22, 0.15);
+  
+  --bg-app: #080C0B;         /* Ultra dark slate-green */
+  --bg-card: #0F1513;        /* Dark card background */
+  --bg-sidebar: #060908;     /* Darker sidebar */
+  
+  --text-main: #E5E7EB;
+  --text-muted: #9CA3AF;
+  
+  --border: #1D2522;
+  --border-focus: #10B981;
+  
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 10px 24px rgba(0, 0, 0, 0.4);
+}
+
+/* Base resets */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--bg-app);
+  color: var(--text-main);
+  min-height: 100vh;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+button, input, select, textarea {
+  font-family: inherit;
+  color: inherit;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: var(--radius-sm);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* App Container Layout */
+.app-container {
+  display: flex;
+  min-height: 100vh;
+  background-color: var(--bg-app);
+  position: relative;
+}
+
+.main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0; /* Prevents flex items from overflowing container */
+  position: relative;
+}
+
+.content-pane {
+  flex: 1;
+  padding: 32px 40px;
+  overflow-y: auto;
+  max-width: 1400px;
+  width: 100%;
+  margin: 0 auto;
+  animation: fadeIn 0.4s ease-out;
+}
+
+/* CSS Utilities & Keyframes */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes scaleIn {
+  from { transform: scale(0.95); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+@keyframes pulse {
+  0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+  70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
+  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+
+.pulsing-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #10B981;
+  display: inline-block;
+  box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+  animation: pulse 2s infinite;
+}
+
+/* Interactive elements */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 20px;
+  border-radius: var(--radius-md);
+  font-weight: 500;
+  font-size: 0.95rem;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  white-space: nowrap;
+}
+
+.btn-primary {
+  background-color: #06402B;
+  color: var(--text-white);
+  border-color: #06402B;
+}
+.btn-primary:hover {
+  background-color: var(--primary-light);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(6, 64, 43, 0.2);
+}
+.dark-theme .btn-primary {
+  background-color: #10B981;
+  color: #053322;
+  border-color: #10B981;
+}
+.dark-theme .btn-primary:hover {
+  background-color: #34D399;
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2);
+}
+
+.btn-secondary {
+  background-color: var(--bg-card);
+  color: var(--text-main);
+  border-color: var(--border);
+}
+.btn-secondary:hover {
+  background-color: var(--bg-app);
+  border-color: var(--text-muted);
+}
+
+/* Tooltip standard classes */
+.tooltip-trigger {
+  position: relative;
+  cursor: pointer;
+}
+.tooltip {
+  position: absolute;
+  bottom: 125%;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: #111827;
+  color: #FFFFFF;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s, transform 0.2s;
+  z-index: 100;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+.tooltip-trigger:hover .tooltip {
+  opacity: 1;
+  transform: translate(-50%, -4px);
+}
