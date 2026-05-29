@@ -7541,16 +7541,21 @@ var DAP = (function (exports) {
     };
     const closeAll = () => {
       if (_surveyDone) return;
-      showConfirmClose({
-        onConfirm: () => {
-          _surveyDone = true;
-          document.removeEventListener("keydown", onKey, true);
-          restoreValidationFor(form);
-          shell.wrap.remove();
-          if (prevActive?.focus) prevActive.focus();
-          payload._completionTracker?.onAbort?.();
-        }
-      });
+      const performClose = () => {
+        _surveyDone = true;
+        document.removeEventListener("keydown", onKey, true);
+        restoreValidationFor(form);
+        shell.wrap.remove();
+        if (prevActive?.focus) prevActive.focus();
+        payload._completionTracker?.onAbort?.();
+      };
+      if (payload.executionMode === "Linear") {
+        showConfirmClose({
+          onConfirm: performClose
+        });
+      } else {
+        performClose();
+      }
     };
     closeBtn.addEventListener("click", closeAll);
     shell.prevBtn.addEventListener("click", advanceSurvey);
