@@ -41,10 +41,10 @@ var DAP = (function (exports) {
 
     /* Hide webkit validation bubble inside DAP forms */
     ${DAP_FORM_CLASSES.map(
-    (cls) => `.${cls} input::-webkit-validation-bubble,
+      (cls) => `.${cls} input::-webkit-validation-bubble,
     .${cls} input::-webkit-validation-bubble-message,
     .${cls} input::-webkit-validation-bubble-arrow`
-  ).join(",\n    ")} {
+    ).join(",\n    ")} {
       display: none !important;
     }
   `;
@@ -2424,7 +2424,7 @@ var DAP = (function (exports) {
       return path === normP || path === normP.replace(/\/$/, "") || `${normP}/` === path;
     }
     const regexStr = "^" + normP.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + // * → .*
-    "$";
+      "$";
     return new RegExp(regexStr, "i").test(path);
   }
   function resolveNavigationUrl(targetUrl) {
@@ -4658,7 +4658,7 @@ var DAP = (function (exports) {
     console.debug("[DAP] Modal flow ID:", id);
     const completionTracker = payload._completionTracker;
     ensureStyles2();
-    const { overlay, modal, header} = createModalElements(payload);
+    const { overlay, modal, header } = createModalElements(payload);
     overlay.id = `dap-modal-overlay-${id}`;
     document.documentElement.appendChild(overlay);
     const prevActive = document.activeElement;
@@ -12341,14 +12341,14 @@ var DAP = (function (exports) {
     }
     interceptHistoryMethods() {
       const self = this;
-      history.pushState = function(state, title, url) {
+      history.pushState = function (state, title, url) {
         self.originalPushState.apply(history, arguments);
         console.debug("[DAP] PageContextService: PushState detected:", url);
         setTimeout(() => {
           self.updateContext("navigation");
         }, 0);
       };
-      history.replaceState = function(state, title, url) {
+      history.replaceState = function (state, title, url) {
         self.originalReplaceState.apply(history, arguments);
         console.debug("[DAP] PageContextService: ReplaceState detected:", url);
         setTimeout(() => {
@@ -13761,7 +13761,7 @@ var DAP = (function (exports) {
       const startIndex = this._state.activeStep;
       if (startIndex >= this._currentFlow.steps.length) return false;
       const currentStep = this._currentFlow.steps[startIndex];
-      const currentStepUrl = this.isFirstFlowStep(currentStep, startIndex) ? void 0 : this.getStepTargetUrl(currentStep);
+      const currentStepUrl = this.getStepTargetUrl(currentStep);
       if (currentStepUrl && this._matchUrlPattern(currentStepUrl, ctx)) {
         return false;
       }
@@ -13942,7 +13942,7 @@ var DAP = (function (exports) {
         return path === p || path === p.replace(/\/$/, "") || `${p}/` === path;
       }
       const regexStr = "^" + p.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + // * → .*
-      "$";
+        "$";
       return new RegExp(regexStr, "i").test(path);
     }
     getStepTargetUrl(step) {
@@ -14921,48 +14921,8 @@ var DAP = (function (exports) {
     stripNullableUrlSelector(selector) {
       return typeof selector === "string" ? stripUrlSelectorTokens(selector) : selector;
     }
-    withFirstStepGlobalSelectors(step, stepIndex) {
-      if (!this.isFirstFlowStep(step, stepIndex)) return step;
-      let changed = false;
-      const strip = (selector) => {
-        const next = this.stripOptionalUrlSelector(selector);
-        if (next !== selector) changed = true;
-        return next;
-      };
-      const stripNullable = (selector) => {
-        const next = this.stripNullableUrlSelector(selector);
-        if (next !== selector) changed = true;
-        return next;
-      };
-      const trigger = step.trigger ? {
-        ...step.trigger,
-        conditions: Array.isArray(step.trigger.conditions) ? step.trigger.conditions.map((condition) => {
-          if (!condition.selector) return condition;
-          const selector = strip(condition.selector);
-          return selector === condition.selector ? condition : { ...condition, selector };
-        }) : step.trigger.conditions
-      } : step.trigger;
-      const uxExperience = step.uxExperience ? {
-        ...step.uxExperience,
-        elementSelector: strip(step.uxExperience.elementSelector)
-      } : step.uxExperience;
-      const userInputSelector = stripNullable(step.userInputSelector);
-      const conditionRuleBlocks = Array.isArray(step.conditionRuleBlocks) ? step.conditionRuleBlocks.map((block) => {
-        if (!block || typeof block.selector !== "string") return block;
-        const selector = strip(block.selector);
-        return selector === block.selector ? block : { ...block, selector };
-      }) : step.conditionRuleBlocks;
-      if (!changed) return step;
-      console.debug(
-        `[DAP] First step ${step.stepId}: ignoring URL selector gates so the global trigger can start from the current page`
-      );
-      return {
-        ...step,
-        trigger,
-        uxExperience,
-        userInputSelector,
-        conditionRuleBlocks
-      };
+    withFirstStepGlobalSelectors(step, _stepIndex) {
+      return step;
     }
     isLikelyGenericPageSelectorToken(token) {
       const trimmed = token.trim();
@@ -15057,23 +15017,7 @@ var DAP = (function (exports) {
      *                  trigger registration should be deferred.
      */
     isStepContextActive(step) {
-      const isFirstStep = this._currentFlow?.steps[0]?.stepId === step.stepId;
       const pageSelector = this.resolveStepPageSelector(step);
-      if (isFirstStep) {
-        if (pageSelector) {
-          const physicalSelector = stripUrlSelectorTokens(pageSelector);
-          const el2 = resolveSelectorWithCache(this.getPageSelectorCacheKey(step), physicalSelector);
-          if (el2) {
-            console.debug(`[DAP] isStepContextActive: First step "${step.stepId}" active via physical element presence (bypassing URL gates entirely)`);
-            return true;
-          } else {
-            console.debug(`[DAP] isStepContextActive: First step "${step.stepId}" inactive because trigger element is not in DOM`);
-            return false;
-          }
-        } else {
-          return true;
-        }
-      }
       if (this._currentFlow?.targetUrls && this._currentFlow.targetUrls.length > 0) {
         const ctx = pageContextService.getCurrentContext();
         const matchesUrl = this._currentFlow.targetUrls.some((p) => this._matchUrlPattern(p, ctx));
@@ -15946,9 +15890,6 @@ var DAP = (function (exports) {
       }
       const ux = step.uxExperience;
       let rawTargetSelector = ux.elementSelector && ux.elementSelector !== "NA" ? ux.elementSelector : step.trigger?.conditions?.find((c) => c.selector)?.selector;
-      if (rawTargetSelector && this.isFirstFlowStep(step, stepIndexOverride)) {
-        rawTargetSelector = stripUrlSelectorTokens(rawTargetSelector);
-      }
       let resolvedTargetSelector = rawTargetSelector;
       if (rawTargetSelector) {
         const targetEl = resolveSelectorWithCache(step.stepId, rawTargetSelector);
