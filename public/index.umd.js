@@ -13703,7 +13703,8 @@ var DAP = (function (exports) {
         anyOrderStepInProgress: false,
         inProgressSteps: /* @__PURE__ */ new Set(),
         pendingUXResume: false,
-        pendingUXResumeSteps: void 0
+        pendingUXResumeSteps: void 0,
+        completedPageId: null
       };
       this._currentFlow = null;
       this._stepTriggerListeners = /* @__PURE__ */ new Map();
@@ -13757,6 +13758,7 @@ var DAP = (function (exports) {
      */
     _syncLinearActiveStepForNewPage() {
       if (!this._currentFlow || this._state.executionMode !== "Linear") return false;
+      if (!this._state.flowInProgress) return false;
       const ctx = pageContextService.getCurrentContext();
       const startIndex = this._state.activeStep;
       if (startIndex >= this._currentFlow.steps.length) return false;
@@ -13850,7 +13852,16 @@ var DAP = (function (exports) {
         activeFlow: this._state.activeFlowId,
         flowInProgress: this._state.flowInProgress
       });
-      if (!this._state.flowInProgress && this._currentFlow && this._currentFlow.steps.length > 0) {
+      if (this._state.completedPageId) {
+        const currentPageId = pageContextService.getPageId();
+        if (currentPageId !== this._state.completedPageId) {
+          console.debug(
+            `[DAP] Clearing completedPageId because user navigated away from completed page (${this._state.completedPageId} -> ${currentPageId})`
+          );
+          this._state.completedPageId = null;
+        }
+      }
+      if (!this._state.flowInProgress && this._currentFlow && this._currentFlow.steps.length > 0 && this.validateFlowFrequency(this._currentFlow, true)) {
         const firstStep = this._currentFlow.steps[0];
         let matchesUrl = true;
         if (this._currentFlow.targetUrls && this._currentFlow.targetUrls.length > 0) {
@@ -14077,14 +14088,21 @@ var DAP = (function (exports) {
           }
           this.executeStepWithTrigger(currentStep, this._state.activeStep);
           if (this._state.activeStep > 0 && this._currentFlow.steps.length > 0) {
-            if (this.hasActiveUXExperience()) {
+            const firstStep = this._currentFlow.steps[0];
+            const firstStepTrigger = this._triggerManager.resolveTrigger(firstStep);
+            const isLifecycleOrTime = firstStepTrigger?.conditions.some((c) => c.kind === "Lifecycle" || c.kind === "Time");
+            if (isLifecycleOrTime) {
+              console.debug(
+                `[DAP] Linear: Step 0 has lifecycle/time trigger; skipping step 0 restart trigger registration while in progress to prevent progress hijacking`
+              );
+            } else if (this.hasActiveUXExperience()) {
               console.debug(
                 `[DAP] Linear: Step ${currentStep.stepId} UX is active; deferring step 0 restart trigger registration to avoid overlapping steps`
               );
             } else {
-              const firstStep = this._currentFlow.steps[0];
+              const firstStep2 = this._currentFlow.steps[0];
               console.debug(`[DAP] Linear: Registering step 0 restart trigger while at activeStep ${this._state.activeStep}`);
-              this.executeStepWithTrigger(firstStep, 0);
+              this.executeStepWithTrigger(firstStep2, 0);
             }
           }
         }
@@ -14123,39 +14141,45 @@ var DAP = (function (exports) {
     /**
      * 🚨 CRITICAL FIX: Validate flow frequency and execution limits   * Implements the OneTime + maxRuns = 1 validation as required
      */
-    validateFlowFrequency(flowData) {
+    validateFlowFrequency(flowData, silent = false) {
+      const logWarn = (...args) => {
+        if (!silent) console.warn(...args);
+      };
+      const logDebug = (...args) => {
+        if (!silent) console.debug(...args);
+      };
       const previewMode = detectPreviewMode();
       if (previewMode.isPreviewMode) {
-        console.debug(`[DAP] \u{1F7E2} PREVIEW MODE: Bypassing frequency validation for flow ${flowData.flowId}`);
+        logDebug(`[DAP] \u{1F7E2} PREVIEW MODE: Bypassing frequency validation for flow ${flowData.flowId}`);
         return true;
       }
       if (this._state.activeFlowId === flowData.flowId && this._state.flowInProgress) {
-        console.debug(`[DAP] \u2705 FLOW RESUME: Bypassing frequency validation for active flow ${flowData.flowId}`);
+        logDebug(`[DAP] \u2705 FLOW RESUME: Bypassing frequency validation for active flow ${flowData.flowId}`);
         return true;
       }
       try {
         const cached = sessionStorage.getItem(`dap_flow_snapshot_${flowData.flowId}`);
         if (cached) {
-          console.debug(`[DAP] \u2705 FLOW RESUME: Found session snapshot for flow ${flowData.flowId}, bypassing frequency validation`);
+          logDebug(`[DAP] \u2705 FLOW RESUME: Found session snapshot for flow ${flowData.flowId}, bypassing frequency validation`);
           return true;
         }
       } catch (e) {
       }
-      console.debug(`[DAP] \u{1F50D} Validating frequency for flow ${flowData.flowId}`);
+      logDebug(`[DAP] \u{1F50D} Validating frequency for flow ${flowData.flowId}`);
       if (!flowData.execution) {
-        console.warn(`[DAP] No execution config found for flow ${flowData.flowId}, allowing by default`);
+        logWarn(`[DAP] No execution config found for flow ${flowData.flowId}, allowing by default`);
         return true;
       }
       const frequency = flowData.execution.frequency;
       if (!frequency) {
-        console.warn(`[DAP] No frequency config found for flow ${flowData.flowId}, allowing by default`);
+        logWarn(`[DAP] No frequency config found for flow ${flowData.flowId}, allowing by default`);
         return true;
       }
       if (frequency.type === "Always") {
-        console.debug(`[DAP] \u2705 FLOW ELIGIBLE: ${flowData.flowId} (Always frequency \u2014 no throttle)`);
+        logDebug(`[DAP] \u2705 FLOW ELIGIBLE: ${flowData.flowId} (Always frequency \u2014 no throttle)`);
         return true;
       }
-      console.debug(`[DAP] Flow frequency config:`, {
+      logDebug(`[DAP] Flow frequency config:`, {
         type: frequency.type,
         maxRuns: frequency.maxRuns,
         flowId: flowData.flowId
@@ -14188,30 +14212,30 @@ var DAP = (function (exports) {
               }
             }
             if (frequency2?.type === "OneTime" && !isAlways && maxRuns2 <= 1 && sessionStorage.getItem(`dap_flow_completed_session_${flowData.flowId}`) === "true") {
-              console.warn(`[DAP] \u{1F6D1} FLOW BLOCKED: Flow ${flowData.flowId} was already completed in this cycle/session.`);
+              logWarn(`[DAP] \u{1F6D1} FLOW BLOCKED: Flow ${flowData.flowId} was already completed in this cycle/session.`);
               return false;
             }
           } catch (e) {
           }
           const storedRuns = localStorage.getItem(flowRunKey);
           const currentRuns = storedRuns ? parseInt(storedRuns, 10) : 0;
-          console.debug(`[DAP] ${frequency.type} flow ${flowData.flowId}: ${currentRuns}/${maxRuns} eligible runs`);
+          logDebug(`[DAP] ${frequency.type} flow ${flowData.flowId}: ${currentRuns}/${maxRuns} eligible runs`);
           if (currentRuns >= maxRuns) {
-            console.warn(`[DAP] \u{1F6D1} FLOW BLOCKED: ${flowData.flowId} has reached maxRuns limit (${currentRuns}/${maxRuns})`);
+            logWarn(`[DAP] \u{1F6D1} FLOW BLOCKED: ${flowData.flowId} has reached maxRuns limit (${currentRuns}/${maxRuns})`);
             return false;
           }
           if (frequency.type === "OneTime") {
             if (maxRuns <= 1) {
               const sessionCompleted = sessionStorage.getItem(`dap_flow_completed_session_${flowData.flowId}`) === "true";
               if (sessionCompleted) {
-                console.warn(`[DAP] \u{1F6D1} FLOW BLOCKED: OneTime flow ${flowData.flowId} was already completed in this cycle/session.`);
+                logWarn(`[DAP] \u{1F6D1} FLOW BLOCKED: OneTime flow ${flowData.flowId} was already completed in this cycle/session.`);
                 return false;
               }
               const completionData = localStorage.getItem(flowCompletedKey);
               if (completionData) {
                 try {
                   const completion = JSON.parse(completionData);
-                  console.warn(`[DAP] \u{1F6D1} FLOW BLOCKED: OneTime flow ${flowData.flowId} was already completed via ${completion.reason} at ${new Date(completion.timestamp).toISOString()}`);
+                  logWarn(`[DAP] \u{1F6D1} FLOW BLOCKED: OneTime flow ${flowData.flowId} was already completed via ${completion.reason} at ${new Date(completion.timestamp).toISOString()}`);
                   return false;
                 } catch (e) {
                   localStorage.removeItem(flowCompletedKey);
@@ -14222,11 +14246,11 @@ var DAP = (function (exports) {
           if (frequency.type === "Recurring" || frequency.type === "OneTime" && maxRuns > 1) {
             try {
               sessionStorage.removeItem(`dap_flow_completed_session_${flowData.flowId}`);
-              console.debug(`[DAP] \u{1F504} Cleared session flag for ${frequency.type} flow ${flowData.flowId} to allow next cycle`);
+              logDebug(`[DAP] \u{1F504} Cleared session flag for ${frequency.type} flow ${flowData.flowId} to allow next cycle`);
             } catch (e) {
             }
           }
-          console.debug(`[DAP] \u2705 FLOW ELIGIBLE: ${flowData.flowId} (${currentRuns}/${maxRuns} runs)`);
+          logDebug(`[DAP] \u2705 FLOW ELIGIBLE: ${flowData.flowId} (${currentRuns}/${maxRuns} runs)`);
           return true;
         } catch (error) {
           console.error(`[DAP] Error checking flow frequency for ${flowData.flowId}:`, error);
@@ -14248,18 +14272,18 @@ var DAP = (function (exports) {
             const elapsed = Date.now() - parseInt(lastRun, 10);
             if (elapsed < windowMs) {
               const remaining = Math.ceil((windowMs - elapsed) / 6e4);
-              console.debug(`[DAP] \u{1F6D1} FLOW BLOCKED: ${flowData.flowId} (${frequency.type} \u2014 ${remaining} min remaining in window)`);
+              logDebug(`[DAP] \u{1F6D1} FLOW BLOCKED: ${flowData.flowId} (${frequency.type} \u2014 ${remaining} min remaining in window)`);
               return false;
             }
           }
-          console.debug(`[DAP] \u2705 FLOW ELIGIBLE: ${flowData.flowId} (${frequency.type} frequency)`);
+          logDebug(`[DAP] \u2705 FLOW ELIGIBLE: ${flowData.flowId} (${frequency.type} frequency)`);
           return true;
         } catch (error) {
           console.error(`[DAP] Error checking ${frequency.type} frequency for ${flowData.flowId}:`, error);
           return true;
         }
       }
-      console.debug(`[DAP] \u2705 FLOW ELIGIBLE: ${flowData.flowId} (unknown frequency type: ${frequency.type})`);
+      logDebug(`[DAP] \u2705 FLOW ELIGIBLE: ${flowData.flowId} (unknown frequency type: ${frequency.type})`);
       return true;
     }
     /**
@@ -14389,7 +14413,8 @@ var DAP = (function (exports) {
         inProgressSteps: /* @__PURE__ */ new Set(),
         pendingUXResume: false,
         pendingUXResumeSteps: void 0,
-        flowOrigin: resumePoint?.flowOrigin || void 0
+        flowOrigin: resumePoint?.flowOrigin || void 0,
+        completedPageId: null
       };
       if (resumePoint) {
         try {
@@ -14448,6 +14473,19 @@ var DAP = (function (exports) {
         } catch (e) {
           console.error(`[DAP] Error clearing session during abort:`, e);
         }
+        try {
+          const flowId = this._state.activeFlowId;
+          const activeStr = sessionStorage.getItem("dap_active_flows");
+          if (activeStr) {
+            const active = JSON.parse(activeStr);
+            if (Array.isArray(active)) {
+              const updated = active.filter((id) => id !== flowId);
+              sessionStorage.setItem("dap_active_flows", JSON.stringify(updated));
+              console.debug(`[DAP] [Cross-Site] Removed aborted flow ${flowId} from active flows list`);
+            }
+          }
+        } catch (e) {
+        }
       }
       this.cleanupCurrentStep();
       this.cleanupAllTimers();
@@ -14468,7 +14506,8 @@ var DAP = (function (exports) {
         anyOrderStepInProgress: false,
         inProgressSteps: /* @__PURE__ */ new Set(),
         pendingUXResume: false,
-        pendingUXResumeSteps: void 0
+        pendingUXResumeSteps: void 0,
+        completedPageId: null
       };
       this._currentFlow = null;
       this._completedMandatorySteps.clear();
@@ -14600,6 +14639,15 @@ var DAP = (function (exports) {
       const trigger = isSubsequentLinearStep ? null : this._triggerManager.resolveTrigger(step);
       if (!trigger) {
         console.debug(`[DAP] Step ${step.stepId}: NO TRIGGER - executing immediately`);
+        if (this._state.executionState === "INACTIVE" && actualStepIndex === 0) {
+          const currentPageId = pageContextService.getPageId();
+          if (currentPageId === this._state.completedPageId) {
+            console.debug(
+              `[DAP] Restart ignored: step 0 has no trigger and we are on the same page visit where the flow completed (${currentPageId}).`
+            );
+            return;
+          }
+        }
         if (!this._state.runCounted && this._currentFlow) {
           this.incrementFlowRunCount(this._currentFlow);
           this._state.runCounted = true;
@@ -14620,6 +14668,16 @@ var DAP = (function (exports) {
         this.setupBlurEventHandler(step);
       }
       this._triggerManager.registerTriggerListeners(step.stepId, trigger, (context) => {
+        const isLifecycleOrTimeTrigger = trigger.conditions.some((c) => c.kind === "Lifecycle" || c.kind === "Time");
+        if (this._state.executionState === "INACTIVE" && isLifecycleOrTimeTrigger) {
+          const currentPageId = pageContextService.getPageId();
+          if (currentPageId === this._state.completedPageId) {
+            console.debug(
+              `[DAP] Restart trigger ignored: lifecycle/time trigger fired on the same page visit where the flow completed (${currentPageId}).`
+            );
+            return;
+          }
+        }
         if (this._state.executionMode === "Linear") {
           if (!this.isStepContextActive(step)) {
             console.debug(
@@ -15742,7 +15800,8 @@ var DAP = (function (exports) {
         anyOrderStepInProgress: false,
         inProgressSteps: /* @__PURE__ */ new Set(),
         pendingUXResume: false,
-        pendingUXResumeSteps: void 0
+        pendingUXResumeSteps: void 0,
+        completedPageId: null
       };
       this._currentFlow = null;
       this._completedMandatorySteps.clear();
@@ -16657,6 +16716,19 @@ var DAP = (function (exports) {
       if (flowId) {
         this.clearFlowProgress(flowId);
         console.debug(`[DAP] \u{1F5D1}\uFE0F Session storage cleared for flow ${flowId}`);
+        try {
+          const activeStr = sessionStorage.getItem("dap_active_flows");
+          if (activeStr) {
+            const active = JSON.parse(activeStr);
+            if (Array.isArray(active)) {
+              const updated = active.filter((id) => id !== flowId);
+              sessionStorage.setItem("dap_active_flows", JSON.stringify(updated));
+              console.debug(`[DAP] [Cross-Site] Removed completed flow ${flowId} from active flows list`);
+            }
+          }
+        } catch (e) {
+          console.error(`[DAP] Failed to remove completed flow from active flows list:`, e);
+        }
       }
       if (flowData && flowId) {
         this.markFlowCompleted(flowData);
@@ -16703,7 +16775,8 @@ var DAP = (function (exports) {
         anyOrderStepInProgress: false,
         inProgressSteps: /* @__PURE__ */ new Set(),
         pendingUXResume: false,
-        pendingUXResumeSteps: void 0
+        pendingUXResumeSteps: void 0,
+        completedPageId: pageContextService.getPageId()
       };
       this._currentFlow = flowDataForRestart;
       this._completedMandatorySteps.clear();
@@ -16712,10 +16785,14 @@ var DAP = (function (exports) {
         isFlowRunning: false,
         activeStepIndex: 0
       });
-      if (this._currentFlow && this._currentFlow.steps.length > 0) {
+      if (this._currentFlow && this._currentFlow.steps.length > 0 && this.validateFlowFrequency(this._currentFlow, true)) {
         const firstStep = this._currentFlow.steps[0];
         console.debug(`[DAP] completeFlow: Registering step 0 trigger for restart.`);
-        this.executeStepWithTrigger(firstStep, 0);
+        setTimeout(() => {
+          if (!this._state.flowInProgress && this._currentFlow && this._state.executionState === "INACTIVE") {
+            this.executeStepWithTrigger(firstStep, 0);
+          }
+        }, 0);
       }
       this._onFlowEnd = endCb;
       endCb?.(flowId, "completed");
@@ -16994,7 +17071,8 @@ var DAP = (function (exports) {
         anyOrderStepInProgress: false,
         inProgressSteps: /* @__PURE__ */ new Set(),
         pendingUXResume: false,
-        pendingUXResumeSteps: void 0
+        pendingUXResumeSteps: void 0,
+        completedPageId: null
       };
       this._currentFlow = null;
       this._completedMandatorySteps.clear();
