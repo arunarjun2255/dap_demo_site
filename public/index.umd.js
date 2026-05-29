@@ -2675,7 +2675,7 @@ var DAP = (function (exports) {
           siteId: flow.config?.siteid || flow.config?.siteId || flow.config?.siteCollectionId,
           stepId: payload.steps[stepIndex].stepId || `step-${stepIndex}`,
           _completionTracker: {
-            onComplete: (isGenuineClick = false) => {
+            onComplete: () => {
               if (stepIndex < payload.steps.length - 1) {
                 transitionToStep(stepIndex + 1);
               } else {
@@ -2714,7 +2714,7 @@ var DAP = (function (exports) {
           const tooltipWithTracker = {
             ...tooltipPayload,
             _completionTracker: {
-              onComplete: (isGenuineClick = false) => {
+              onComplete: () => {
                 if (stepIndex < payload.steps.length - 1) {
                   transitionToStep(stepIndex + 1);
                 } else {
@@ -2745,7 +2745,7 @@ var DAP = (function (exports) {
           const popoverWithTracker = {
             ...popoverPayload,
             _completionTracker: {
-              onComplete: (isGenuineClick = false) => {
+              onComplete: () => {
                 if (stepIndex < payload.steps.length - 1) {
                   transitionToStep(stepIndex + 1);
                 } else {
@@ -2939,7 +2939,7 @@ var DAP = (function (exports) {
       prevActive?.focus();
       if (completionTracker?.onComplete) {
         console.debug(`[DAP] Completing modal sequence flow: ${id}`);
-        completionTracker.onComplete(true);
+        completionTracker.onComplete();
       }
     }
   }
@@ -4694,15 +4694,15 @@ var DAP = (function (exports) {
       if (modal._accessibilityCleanup) {
         modal._accessibilityCleanup();
       }
-      if (completionTracker?.onComplete) {
-        console.debug(`[DAP] Completing modal flow (sync): ${id}`);
-        completionTracker.onComplete(true);
-      }
       overlay.style.animation = "dapOverlayOut 0.28s var(--dap-ease) both";
       modal.style.animation = "dapModalOut 0.28s var(--dap-ease) both";
       setTimeout(() => {
         overlay.remove();
         prevActive?.focus();
+        if (completionTracker?.onComplete) {
+          console.debug(`[DAP] Completing modal flow: ${id}`);
+          completionTracker.onComplete();
+        }
       }, 280);
     }
     function advanceModal() {
@@ -4712,15 +4712,15 @@ var DAP = (function (exports) {
       if (modal._accessibilityCleanup) {
         modal._accessibilityCleanup();
       }
-      if (completionTracker?.onComplete) {
-        console.debug(`[DAP] Advancing modal flow (sync): ${id}`);
-        completionTracker.onComplete(true);
-      }
       overlay.style.animation = "dapOverlayOut 0.28s var(--dap-ease) both";
       modal.style.animation = "dapModalOut 0.28s var(--dap-ease) both";
       setTimeout(() => {
         overlay.remove();
         prevActive?.focus();
+        if (completionTracker?.onComplete) {
+          console.debug(`[DAP] Advancing modal flow: ${id}`);
+          completionTracker.onComplete();
+        }
       }, 280);
     }
     const closeBtn = modal.querySelector(".dap-modal-close");
@@ -5655,13 +5655,13 @@ var DAP = (function (exports) {
         targetSelector: payload.targetSelector,
         hasText: !!payload.text
       });
-      payload._completionTracker?.onComplete?.(true);
+      payload._completionTracker?.onComplete?.();
       return;
     }
     const target = await waitForTarget(payload.targetSelector, 5e3);
     if (!target) {
       console.warn("[DAP] Tooltip target not found", { selector: payload.targetSelector });
-      payload._completionTracker?.onComplete?.(true);
+      payload._completionTracker?.onComplete?.();
       return;
     }
     console.debug("[DAP] Tooltip target resolved", { selector: payload.targetSelector });
@@ -5810,7 +5810,7 @@ var DAP = (function (exports) {
       } else if (isCompletion) {
         if (this.payload._completionTracker?.onComplete) {
           console.debug("[DAP] Completing tooltip flow", { id: this.id });
-          this.payload._completionTracker.onComplete(true);
+          this.payload._completionTracker.onComplete();
         }
         this._completed = true;
       }
@@ -7336,7 +7336,7 @@ var DAP = (function (exports) {
     const { payload, id } = flow;
     if (!payload.questions || payload.questions.length === 0) {
       console.error("[DAP] Modal survey requires questions array");
-      payload._completionTracker?.onComplete?.(true);
+      payload._completionTracker?.onComplete?.();
       return;
     }
     console.debug("[DAP] === SURVEY DEBUG: Rendering modal survey ===");
@@ -7537,7 +7537,7 @@ var DAP = (function (exports) {
       restoreValidationFor(form);
       shell.wrap.remove();
       if (prevActive?.focus) prevActive.focus();
-      payload._completionTracker?.onComplete?.(true);
+      payload._completionTracker?.onComplete?.();
     };
     const closeAll = () => {
       if (_surveyDone) return;
@@ -7565,7 +7565,7 @@ var DAP = (function (exports) {
     console.debug("[DAP] MicroSurvey initialized", { id, payload });
     if (!payload.question) {
       console.error("[DAP] MicroSurvey missing required question");
-      payload._completionTracker?.onComplete?.(true);
+      payload._completionTracker?.onComplete?.();
       return;
     }
     if (activeMicroSurveys.has(id)) {
@@ -7673,7 +7673,7 @@ var DAP = (function (exports) {
     cancelBtn.textContent = payload.cancelText || "Dismiss";
     cancelBtn.addEventListener("click", () => {
       cleanupMicroSurvey(id);
-      payload._completionTracker?.onComplete?.(true);
+      payload._completionTracker?.onComplete?.();
     });
     const submitBtn = document.createElement("button");
     submitBtn.className = "dap-cta";
@@ -7701,9 +7701,9 @@ var DAP = (function (exports) {
           submitBtn.textContent = "\u2713 Thanks!";
           submitBtn.style.opacity = "1";
           submitBtn.classList.add("dap-cta--success");
-          payload._completionTracker?.onComplete?.(true);
           setTimeout(() => {
             cleanupMicroSurvey(id);
+            payload._completionTracker?.onComplete?.();
           }, 700);
         } catch (error) {
           console.error("[DAP] Micro survey submission failed:", error);
@@ -8720,12 +8720,12 @@ var DAP = (function (exports) {
     console.debug("[DAP] Popover initialized", { id, payload });
     if (!payload.targetSelector) {
       console.error("[DAP] Popover missing required targetSelector");
-      payload._completionTracker?.onComplete?.(true);
+      payload._completionTracker?.onComplete?.();
       return;
     }
     if (!payload.body && !payload.bodyBlocks) {
       console.error("[DAP] Popover missing required content");
-      payload._completionTracker?.onComplete?.(true);
+      payload._completionTracker?.onComplete?.();
       return;
     }
     if (activePopovers.has(id)) cleanupPopover(id);
@@ -8733,7 +8733,7 @@ var DAP = (function (exports) {
     const targetElement = await waitForTargetElement(payload.targetSelector);
     if (!targetElement) {
       console.warn("[DAP] Popover target not found:", payload.targetSelector);
-      payload._completionTracker?.onComplete?.(true);
+      payload._completionTracker?.onComplete?.();
       return;
     }
     const popoverElement = createPopoverElement(payload, id);
@@ -8857,7 +8857,7 @@ var DAP = (function (exports) {
     } else if (isCompletion) {
       state._done = true;
       state.isActive = false;
-      state.payload._completionTracker?.onComplete?.(true);
+      state.payload._completionTracker?.onComplete?.();
     } else {
       state.isActive = false;
     }
@@ -8894,7 +8894,7 @@ var DAP = (function (exports) {
       btn.addEventListener("click", () => {
         if (b.action === "advance") payload._completionTracker?.onStepAdvance?.(payload.stepId || id);
         else if (b.action === "dismiss") dismissPopover(id);
-        payload._completionTracker?.onComplete?.(true);
+        payload._completionTracker?.onComplete?.();
       });
       row.appendChild(btn);
     });
@@ -9654,7 +9654,7 @@ var DAP = (function (exports) {
     if (abort) {
       payload?._completionTracker?.onAbort?.();
     } else {
-      payload?._completionTracker?.onComplete?.(true);
+      payload?._completionTracker?.onComplete?.();
     }
     setTimeout(() => cleanupBeacon(id), 250);
   }
@@ -9975,15 +9975,12 @@ var DAP = (function (exports) {
     const advance = () => {
       if (_isDismissed) return;
       _isDismissed = true;
-      if (payload._completionTracker?.onComplete) {
-        console.debug(`[DAP] Completing banner flow (sync): ${id}`);
-        payload._completionTracker.onComplete(true);
-      }
       const isBottom = position === "bottom";
       wrap.style.animation = isBottom ? "bannerSlideOutBottom 0.22s cubic-bezier(0.4,0,1,1) both" : "bannerSlideOutTop 0.22s cubic-bezier(0.4,0,1,1) both";
       wrap.addEventListener("animationend", () => {
         if (wrap.parentNode) {
           wrap.parentNode.removeChild(wrap);
+          payload._completionTracker?.onComplete?.();
         }
       }, { once: true });
     };
@@ -10558,7 +10555,7 @@ var DAP = (function (exports) {
       currentTooltip?.remove();
       progressEl?.remove();
       skipEl?.remove();
-      completionTracker?.onComplete?.(true);
+      completionTracker?.onComplete?.();
     }
     function onHotspotsKey(e) {
       if (e.key === "Escape") {
@@ -11095,7 +11092,7 @@ var DAP = (function (exports) {
       currentTooltip?.remove();
       progressEl?.remove();
       closeEl.remove();
-      completionTracker?.onComplete?.(true);
+      completionTracker?.onComplete?.();
     }
   }
   function buildOverlay() {
@@ -11547,14 +11544,14 @@ var DAP = (function (exports) {
       if (_taskListDone) return;
       _taskListDone = true;
       document.removeEventListener("keydown", handleKeyboard);
-      if (completionTracker?.onComplete) {
-        console.debug(`[DAP] Completing task list flow (sync): ${id}`);
-        completionTracker.onComplete(true);
-      }
       overlay.style.animation = "tasklistOverlayFadeOut 0.2s ease-in";
       modal.style.animation = "tasklistModalOut 0.2s ease-in";
       setTimeout(() => {
         overlay.remove();
+        if (completionTracker?.onComplete) {
+          console.debug(`[DAP] Completing task list flow: ${id}`);
+          completionTracker.onComplete();
+        }
       }, 200);
     }
     const completeBtn = footerEl.querySelector(".dap-tasklist-complete");
@@ -12140,10 +12137,6 @@ var DAP = (function (exports) {
       document.querySelectorAll(".dap-walkthrough-highlight").forEach((el) => {
         el.classList.remove("dap-walkthrough-highlight");
       });
-      if (completionTracker?.onComplete) {
-        console.debug(`[DAP] Completing walkthrough flow (sync): ${id}`);
-        completionTracker.onComplete(true);
-      }
       overlay.style.opacity = "0";
       tooltip.style.opacity = "0";
       spotlight.style.opacity = "0";
@@ -12151,6 +12144,10 @@ var DAP = (function (exports) {
         overlay.remove();
         tooltip.remove();
         spotlight.remove();
+        if (completionTracker?.onComplete) {
+          console.debug(`[DAP] Completing walkthrough flow: ${id}`);
+          completionTracker.onComplete();
+        }
       }, 300);
       document.removeEventListener("keydown", handleKeyboard);
     }
@@ -12385,7 +12382,6 @@ var DAP = (function (exports) {
   var LocationContextService = class _LocationContextService {
     constructor() {
       this._listeners = /* @__PURE__ */ new Set();
-      this._isScreenIdExplicit = false;
       this._currentContext = {
         currentPath: window.location.pathname.replace(/^\/+/, "")
       };
@@ -12407,9 +12403,8 @@ var DAP = (function (exports) {
      * Set the current screen ID
      * @param screenId The ID of the current screen/view
      */
-    setScreenId(screenId, isExplicit = true) {
+    setScreenId(screenId) {
       const normalizedScreenId = screenId.replace(/^\/+/, "");
-      this._isScreenIdExplicit = isExplicit;
       this._currentContext = {
         ...this._currentContext,
         screenId: normalizedScreenId
@@ -12420,14 +12415,13 @@ var DAP = (function (exports) {
      * Set the current location context
      * @param context New context values
      */
-    setContext(context, isExplicit = true) {
+    setContext(context) {
       const normalizedContext = { ...context };
       if (normalizedContext.currentPath) {
         normalizedContext.currentPath = normalizedContext.currentPath.replace(/^\/+/, "");
       }
       if (normalizedContext.screenId) {
         normalizedContext.screenId = normalizedContext.screenId.replace(/^\/+/, "");
-        this._isScreenIdExplicit = isExplicit;
       }
       this._currentContext = {
         ...this._currentContext,
@@ -12458,8 +12452,7 @@ var DAP = (function (exports) {
       const normalizedPath = window.location.pathname.replace(/^\/+/, "");
       this._currentContext = {
         ...this._currentContext,
-        currentPath: normalizedPath,
-        screenId: this._isScreenIdExplicit ? this._currentContext.screenId : normalizedPath
+        currentPath: normalizedPath
       };
       this.notifyListeners();
     }
@@ -13858,23 +13851,29 @@ var DAP = (function (exports) {
         flowInProgress: this._state.flowInProgress
       });
       if (!this._state.flowInProgress && this._currentFlow && this._currentFlow.steps.length > 0) {
-        if (this.validateFlowFrequency(this._currentFlow)) {
-          const firstStep = this._currentFlow.steps[0];
-          console.debug(
-            `[DAP] \u{1F504} AUTO-RESTART: Preserved flow "${this._currentFlow.flowId}" is inactive. Registering step 0 trigger (immediate or deferred) for restart.`
-          );
-          const deferCancel = this._stepTriggerListeners.get(`${firstStep.stepId}_defer`);
-          if (deferCancel) {
-            deferCancel();
-            this._stepTriggerListeners.delete(`${firstStep.stepId}_defer`);
-          }
-          this.executeStepWithTrigger(firstStep, 0);
-        } else {
-          console.debug(
-            `[DAP] \u{1F504} AUTO-RESTART: Preserved flow "${this._currentFlow.flowId}" is inactive, but frequency validation failed. Bypassing step 0 trigger registration for restart.`
-          );
+        const firstStep = this._currentFlow.steps[0];
+        let matchesUrl = true;
+        if (this._currentFlow.targetUrls && this._currentFlow.targetUrls.length > 0) {
+          const ctx = pageContextService.getCurrentContext();
+          matchesUrl = this._currentFlow.targetUrls.some((p) => this._matchUrlPattern(p, ctx));
         }
-        return;
+        if (matchesUrl) {
+          let stepUrl = firstStep.url || firstStep.targetUrl;
+          if (stepUrl && (stepUrl.toLowerCase().startsWith("url=") || stepUrl.includes("|"))) {
+            stepUrl = extractUrlFromSelector(stepUrl) || void 0;
+          }
+          if (stepUrl) {
+            const ctx = pageContextService.getCurrentContext();
+            matchesUrl = this._matchUrlPattern(stepUrl, ctx);
+          }
+        }
+        if (matchesUrl) {
+          console.debug(
+            `[DAP] \u{1F504} AUTO-RESTART: Preserved flow "${this._currentFlow.flowId}" is inactive. We are on the matching page for step 0. Registering/deferring trigger.`
+          );
+          this.executeStepWithTrigger(firstStep, 0);
+          return;
+        }
       }
       if (!this._state.flowInProgress || !this._currentFlow) return;
       console.debug(
@@ -14077,6 +14076,17 @@ var DAP = (function (exports) {
             this.removeStepVisualUX(currentStep);
           }
           this.executeStepWithTrigger(currentStep, this._state.activeStep);
+          if (this._state.activeStep > 0 && this._currentFlow.steps.length > 0) {
+            if (this.hasActiveUXExperience()) {
+              console.debug(
+                `[DAP] Linear: Step ${currentStep.stepId} UX is active; deferring step 0 restart trigger registration to avoid overlapping steps`
+              );
+            } else {
+              const firstStep = this._currentFlow.steps[0];
+              console.debug(`[DAP] Linear: Registering step 0 restart trigger while at activeStep ${this._state.activeStep}`);
+              this.executeStepWithTrigger(firstStep, 0);
+            }
+          }
         }
       } else {
         this._currentFlow.steps.forEach((step, index) => {
@@ -14620,12 +14630,6 @@ var DAP = (function (exports) {
           const currentStepIndex = this._state.activeStep;
           const actualStepIndex2 = stepIndex !== void 0 ? stepIndex : currentStepIndex;
           if (actualStepIndex2 === 0 && (currentStepIndex > 0 || !this._state.flowInProgress)) {
-            if (this._currentFlow && !this.validateFlowFrequency(this._currentFlow)) {
-              console.debug(
-                `[DAP] First step restart trigger ignored because flow frequency validation failed`
-              );
-              return;
-            }
             if (this._state.flowInProgress && this.hasActiveUXExperience(0)) {
               console.debug(
                 `[DAP] First step restart trigger ignored because another step UX is currently active`
@@ -16038,8 +16042,8 @@ var DAP = (function (exports) {
           nextStepTitle,
           nextStepTargetUrl,
           _completionTracker: {
-            onComplete: (isGenuineClick = false) => {
-              this.onStepComplete(step, isGenuineClick);
+            onComplete: () => {
+              this.onStepComplete(step);
             },
             onAbort: () => {
               this.abortFlow();
@@ -16062,8 +16066,8 @@ var DAP = (function (exports) {
           nextStepTitle,
           nextStepTargetUrl,
           _completionTracker: {
-            onComplete: (isGenuineClick = false) => {
-              this.onStepComplete(step, isGenuineClick);
+            onComplete: () => {
+              this.onStepComplete(step);
             },
             onAbort: () => {
               this.abortFlow();
@@ -16088,8 +16092,8 @@ var DAP = (function (exports) {
           nextStepTitle,
           nextStepTargetUrl,
           _completionTracker: {
-            onComplete: (isGenuineClick = false) => {
-              this.onStepComplete(step, isGenuineClick);
+            onComplete: () => {
+              this.onStepComplete(step);
             },
             onAbort: () => {
               this.abortFlow();
@@ -16115,8 +16119,8 @@ var DAP = (function (exports) {
           nextStepTitle,
           nextStepTargetUrl,
           _completionTracker: {
-            onComplete: (isGenuineClick = false) => {
-              this.onStepComplete(step, isGenuineClick);
+            onComplete: () => {
+              this.onStepComplete(step);
             },
             onAbort: () => {
               this.abortFlow();
@@ -16167,8 +16171,8 @@ var DAP = (function (exports) {
           isLastStep,
           nextStepTitle,
           _completionTracker: {
-            onComplete: (isGenuineClick = false) => {
-              this.onStepComplete(step, isGenuineClick);
+            onComplete: () => {
+              this.onStepComplete(step);
             },
             onAbort: () => {
               this.abortFlow();
@@ -16218,8 +16222,8 @@ var DAP = (function (exports) {
           isLastStep,
           nextStepTitle,
           _completionTracker: {
-            onComplete: (isGenuineClick = false) => {
-              this.onStepComplete(step, isGenuineClick);
+            onComplete: () => {
+              this.onStepComplete(step);
             },
             onAbort: () => {
               this.abortFlow();
@@ -16244,8 +16248,8 @@ var DAP = (function (exports) {
           isLastStep,
           nextStepTitle,
           _completionTracker: {
-            onComplete: (isGenuineClick = false) => {
-              this.onStepComplete(step, isGenuineClick);
+            onComplete: () => {
+              this.onStepComplete(step);
             },
             onAbort: () => {
               this.abortFlow();
@@ -16267,8 +16271,8 @@ var DAP = (function (exports) {
             // Include target URL for multi-page flow support
           }],
           _completionTracker: {
-            onComplete: (isGenuineClick = false) => {
-              this.onStepComplete(step, isGenuineClick);
+            onComplete: () => {
+              this.onStepComplete(step);
             }
           }
         };
@@ -16313,7 +16317,7 @@ var DAP = (function (exports) {
      * - AnyOrder: clears concurrency guard, marks step complete, checks flow completion.
      * - Linear: advances to the next step (existing behaviour).
      */
-    onStepComplete(step, isGenuineClick = false) {
+    onStepComplete(step) {
       console.debug(`[DAP] UX experience completed for step: ${step.stepId}`);
       if (this._state.executionMode === "AnyOrder") {
         this._state.anyOrderStepInProgress = false;
@@ -16365,14 +16369,14 @@ var DAP = (function (exports) {
         this._state.anyOrderStepInProgress = false;
         if (this._currentFlow && this._state.activeStep < this._currentFlow.steps.length && this._currentFlow.steps[this._state.activeStep].stepId === step.stepId) {
           const isLastStep = this._state.activeStep === this._currentFlow.steps.length - 1;
-          if (!isGenuineClick && !isLastStep && !this.isStepContextActive(step)) {
+          if (!isLastStep && !this.isStepContextActive(step)) {
             console.debug(
               `[DAP] Linear onStepComplete: step ${step.stepId} \u2014 page context not active (UX dismissed by navigation, not by genuine completion). Keeping activeStep at ${this._state.activeStep} so the border reappears when the user returns to this step's page.`
             );
             this._state.activeStepTriggered = false;
             this._state.activeStepTriggeredPageId = null;
           } else {
-            this.advanceToNextStep(isGenuineClick);
+            this.advanceToNextStep();
           }
         } else {
           console.debug(`[DAP] Step ${step.stepId} is no longer active, skipping advancement`);
@@ -16383,7 +16387,7 @@ var DAP = (function (exports) {
      * Advance to next step intelligently (respects triggers)
      * Enhanced with CRITICAL FIXES 1-6 integration
      */
-    advanceToNextStep(isGenuineClick = false) {
+    advanceToNextStep() {
       if (!this._currentFlow || !this._state.activeFlowId) {
         console.debug(`[DAP] advanceToNextStep: no active flow \u2014 ignoring stale callback`);
         return;
@@ -16394,7 +16398,7 @@ var DAP = (function (exports) {
       }
       this._state.stepAdvancing = true;
       console.debug(`[DAP] ========== ADVANCING FROM STEP ${this._state.activeStep} ==========`);
-      this.cleanupCurrentStep(void 0, isGenuineClick);
+      this.cleanupCurrentStep();
       if (this._state.executionMode === "Linear") {
         this.cleanupPreviousStepTriggers();
       }
@@ -16426,7 +16430,7 @@ var DAP = (function (exports) {
       } else {
         console.debug(`[DAP] \u2705 No more steps, flow completed`);
         this._state.stepAdvancing = false;
-        this.completeFlow(isGenuineClick);
+        this.completeFlow();
         return;
       }
       this._state.stepAdvancing = false;
@@ -16645,7 +16649,7 @@ var DAP = (function (exports) {
         console.error(`[DAP] ERROR: Failed to clear flow progress for ${flowId}:`, e);
       }
     }
-    completeFlow(isGenuineClick = false) {
+    completeFlow() {
       const flowData = this._currentFlow;
       const flowId = this._state.activeFlowId;
       console.debug(`[DAP] \u2705 FLOW COMPLETED: ${flowId}`);
@@ -16667,20 +16671,16 @@ var DAP = (function (exports) {
       }
       const endCb = this._onFlowEnd;
       if (this._currentFlow) {
-        this._currentFlow.steps.forEach((step, idx) => {
-          const isLastStep = idx === this._currentFlow.steps.length - 1;
-          if (!(isGenuineClick && isLastStep)) {
-            this.removeStepVisualUX(step);
-          }
+        this._currentFlow.steps.forEach((step) => {
+          this.removeStepVisualUX(step);
         });
       }
       if (this._currentFlow) {
         this._currentFlow.steps.forEach((_, idx) => {
-          const isLastStep = idx === this._currentFlow.steps.length - 1;
-          this.cleanupCurrentStep(idx, isGenuineClick && isLastStep);
+          this.cleanupCurrentStep(idx);
         });
       } else {
-        this.cleanupCurrentStep(void 0, isGenuineClick);
+        this.cleanupCurrentStep();
       }
       this.cleanupAllTimers();
       if (this._state.activeFlowId) {
@@ -16713,13 +16713,9 @@ var DAP = (function (exports) {
         activeStepIndex: 0
       });
       if (this._currentFlow && this._currentFlow.steps.length > 0) {
-        if (this.validateFlowFrequency(this._currentFlow)) {
-          const firstStep = this._currentFlow.steps[0];
-          console.debug(`[DAP] completeFlow: Registering step 0 trigger for restart.`);
-          this.executeStepWithTrigger(firstStep, 0);
-        } else {
-          console.debug(`[DAP] completeFlow: Bypassing step 0 trigger registration for restart (frequency validation failed).`);
-        }
+        const firstStep = this._currentFlow.steps[0];
+        console.debug(`[DAP] completeFlow: Registering step 0 trigger for restart.`);
+        this.executeStepWithTrigger(firstStep, 0);
       }
       this._onFlowEnd = endCb;
       endCb?.(flowId, "completed");
@@ -16764,7 +16760,7 @@ var DAP = (function (exports) {
     /**
      * Clean up current step listeners and state
      */
-    cleanupCurrentStep(stepIndex, isGenuineClick = false) {
+    cleanupCurrentStep(stepIndex) {
       if (this._state.executionMode === "AnyOrder" && this._currentFlow) {
         this._currentFlow.steps.forEach((step, index) => {
           if (!this._state.triggeredSteps.has(index)) {
@@ -16820,9 +16816,7 @@ var DAP = (function (exports) {
           this.clearRuleEvaluationTimers(currentStep.stepId);
           this.clearInputStabilityTimers(currentStep.stepId);
           this._state.inProgressSteps.delete(targetIndex);
-          if (!isGenuineClick) {
-            this.removeStepVisualUX(currentStep);
-          }
+          this.removeStepVisualUX(currentStep);
         }
       }
       if (this._currentFlow && targetIndex >= 0 && targetIndex < this._currentFlow.steps.length) {
@@ -18549,7 +18543,7 @@ var DAP = (function (exports) {
     locationService.setContext({
       currentPath: pathname,
       screenId: screenId || pathname
-    }, !!screenId);
+    });
     log("Location context set", locationService.getContext());
     if (_corsCheckPassed === null) {
       log("Performing CORS origin check...");
