@@ -12385,6 +12385,7 @@ var DAP = (function (exports) {
   var LocationContextService = class _LocationContextService {
     constructor() {
       this._listeners = /* @__PURE__ */ new Set();
+      this._isScreenIdExplicit = false;
       this._currentContext = {
         currentPath: window.location.pathname.replace(/^\/+/, "")
       };
@@ -12406,8 +12407,9 @@ var DAP = (function (exports) {
      * Set the current screen ID
      * @param screenId The ID of the current screen/view
      */
-    setScreenId(screenId) {
+    setScreenId(screenId, isExplicit = true) {
       const normalizedScreenId = screenId.replace(/^\/+/, "");
+      this._isScreenIdExplicit = isExplicit;
       this._currentContext = {
         ...this._currentContext,
         screenId: normalizedScreenId
@@ -12418,13 +12420,14 @@ var DAP = (function (exports) {
      * Set the current location context
      * @param context New context values
      */
-    setContext(context) {
+    setContext(context, isExplicit = true) {
       const normalizedContext = { ...context };
       if (normalizedContext.currentPath) {
         normalizedContext.currentPath = normalizedContext.currentPath.replace(/^\/+/, "");
       }
       if (normalizedContext.screenId) {
         normalizedContext.screenId = normalizedContext.screenId.replace(/^\/+/, "");
+        this._isScreenIdExplicit = isExplicit;
       }
       this._currentContext = {
         ...this._currentContext,
@@ -12455,7 +12458,8 @@ var DAP = (function (exports) {
       const normalizedPath = window.location.pathname.replace(/^\/+/, "");
       this._currentContext = {
         ...this._currentContext,
-        currentPath: normalizedPath
+        currentPath: normalizedPath,
+        screenId: this._isScreenIdExplicit ? this._currentContext.screenId : normalizedPath
       };
       this.notifyListeners();
     }
@@ -13854,16 +13858,22 @@ var DAP = (function (exports) {
         flowInProgress: this._state.flowInProgress
       });
       if (!this._state.flowInProgress && this._currentFlow && this._currentFlow.steps.length > 0) {
-        const firstStep = this._currentFlow.steps[0];
-        console.debug(
-          `[DAP] \u{1F504} AUTO-RESTART: Preserved flow "${this._currentFlow.flowId}" is inactive. Registering step 0 trigger (immediate or deferred) for restart.`
-        );
-        const deferCancel = this._stepTriggerListeners.get(`${firstStep.stepId}_defer`);
-        if (deferCancel) {
-          deferCancel();
-          this._stepTriggerListeners.delete(`${firstStep.stepId}_defer`);
+        if (this.validateFlowFrequency(this._currentFlow)) {
+          const firstStep = this._currentFlow.steps[0];
+          console.debug(
+            `[DAP] \u{1F504} AUTO-RESTART: Preserved flow "${this._currentFlow.flowId}" is inactive. Registering step 0 trigger (immediate or deferred) for restart.`
+          );
+          const deferCancel = this._stepTriggerListeners.get(`${firstStep.stepId}_defer`);
+          if (deferCancel) {
+            deferCancel();
+            this._stepTriggerListeners.delete(`${firstStep.stepId}_defer`);
+          }
+          this.executeStepWithTrigger(firstStep, 0);
+        } else {
+          console.debug(
+            `[DAP] \u{1F504} AUTO-RESTART: Preserved flow "${this._currentFlow.flowId}" is inactive, but frequency validation failed. Bypassing step 0 trigger registration for restart.`
+          );
         }
-        this.executeStepWithTrigger(firstStep, 0);
         return;
       }
       if (!this._state.flowInProgress || !this._currentFlow) return;
@@ -14067,17 +14077,6 @@ var DAP = (function (exports) {
             this.removeStepVisualUX(currentStep);
           }
           this.executeStepWithTrigger(currentStep, this._state.activeStep);
-          if (this._state.activeStep > 0 && this._currentFlow.steps.length > 0) {
-            if (this.hasActiveUXExperience()) {
-              console.debug(
-                `[DAP] Linear: Step ${currentStep.stepId} UX is active; deferring step 0 restart trigger registration to avoid overlapping steps`
-              );
-            } else {
-              const firstStep = this._currentFlow.steps[0];
-              console.debug(`[DAP] Linear: Registering step 0 restart trigger while at activeStep ${this._state.activeStep}`);
-              this.executeStepWithTrigger(firstStep, 0);
-            }
-          }
         }
       } else {
         this._currentFlow.steps.forEach((step, index) => {
@@ -14621,6 +14620,12 @@ var DAP = (function (exports) {
           const currentStepIndex = this._state.activeStep;
           const actualStepIndex2 = stepIndex !== void 0 ? stepIndex : currentStepIndex;
           if (actualStepIndex2 === 0 && (currentStepIndex > 0 || !this._state.flowInProgress)) {
+            if (this._currentFlow && !this.validateFlowFrequency(this._currentFlow)) {
+              console.debug(
+                `[DAP] First step restart trigger ignored because flow frequency validation failed`
+              );
+              return;
+            }
             if (this._state.flowInProgress && this.hasActiveUXExperience(0)) {
               console.debug(
                 `[DAP] First step restart trigger ignored because another step UX is currently active`
@@ -16708,9 +16713,13 @@ var DAP = (function (exports) {
         activeStepIndex: 0
       });
       if (this._currentFlow && this._currentFlow.steps.length > 0) {
-        const firstStep = this._currentFlow.steps[0];
-        console.debug(`[DAP] completeFlow: Registering step 0 trigger for restart.`);
-        this.executeStepWithTrigger(firstStep, 0);
+        if (this.validateFlowFrequency(this._currentFlow)) {
+          const firstStep = this._currentFlow.steps[0];
+          console.debug(`[DAP] completeFlow: Registering step 0 trigger for restart.`);
+          this.executeStepWithTrigger(firstStep, 0);
+        } else {
+          console.debug(`[DAP] completeFlow: Bypassing step 0 trigger registration for restart (frequency validation failed).`);
+        }
       }
       this._onFlowEnd = endCb;
       endCb?.(flowId, "completed");
@@ -18540,7 +18549,7 @@ var DAP = (function (exports) {
     locationService.setContext({
       currentPath: pathname,
       screenId: screenId || pathname
-    });
+    }, !!screenId);
     log("Location context set", locationService.getContext());
     if (_corsCheckPassed === null) {
       log("Performing CORS origin check...");
