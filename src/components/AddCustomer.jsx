@@ -4,19 +4,21 @@ import { useNavigate } from 'react-router-dom';
 export default function AddCustomer({ onAdd }) {
   const navigate = useNavigate();
   const [name, setName] = useState('');
+  const [customerId, setCustomerId] = useState(`CUST-${Math.floor(1000 + Math.random() * 9000)}`);
+  const [customerType, setCustomerType] = useState('Individual');
   const [city, setCity] = useState('');
   const [exposure, setExposure] = useState('');
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!name) return;
+    if (!name || !customerId) return;
 
     // Convert exposure string or number
     // Clean text like "₹ 15 L" or just a number
     const numericExposure = parseFloat(exposure.replace(/[^0-9.]/g, '')) || 0;
 
     const newCustomer = {
-      id: `CUST-${Math.floor(1000 + Math.random() * 9000)}`,
+      id: customerId.trim(),
       name: name,
       email: `${name.toLowerCase().replace(/\s+/g, '.')}@gmail.com`,
       phone: '+91 99000 ' + Math.floor(10000 + Math.random() * 90000),
@@ -26,6 +28,7 @@ export default function AddCustomer({ onAdd }) {
       creditScore: 750, // default good score
       kycStatus: 'Verified',
       riskGrade: 'Grade B',
+      customerType: customerType,
       schedule: [
         { emiNo: 1, dueDate: '10 Jun 2026', amount: '₹12,500', status: 'Pending' }
       ]
@@ -55,6 +58,33 @@ export default function AddCustomer({ onAdd }) {
               required
               className="form-input"
             />
+          </div>
+
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label required">Customer ID</label>
+              <input
+                type="text"
+                value={customerId}
+                onChange={(e) => setCustomerId(e.target.value)}
+                placeholder="CUST-XXXX"
+                required
+                className="form-input"
+              />
+            </div>
+            <div className="form-group">
+              <label className="form-label required">Customer Type</label>
+              <select
+                value={customerType}
+                onChange={(e) => setCustomerType(e.target.value)}
+                className="form-select"
+                required
+              >
+                <option value="Individual">Individual</option>
+                <option value="Corporate">Corporate</option>
+                <option value="Business">Business</option>
+              </select>
+            </div>
           </div>
 
           <div className="form-row">
@@ -178,6 +208,33 @@ export default function AddCustomer({ onAdd }) {
         }
 
         .form-input:focus {
+          border-color: var(--border-focus);
+          box-shadow: 0 0 0 3px rgba(var(--primary-rgb), 0.08);
+        }
+
+        .form-select {
+          border: 1px solid var(--border);
+          background-color: var(--bg-card);
+          padding: 10px 14px;
+          border-radius: var(--radius-md);
+          font-size: 0.9rem;
+          outline: none;
+          color: var(--text-main);
+          transition: border-color 0.2s;
+          cursor: pointer;
+          appearance: none;
+          background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+          background-repeat: no-repeat;
+          background-position: right 14px center;
+          background-size: 16px;
+          padding-right: 40px;
+        }
+
+        .dark-theme .form-select {
+          background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a1a1aa' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+        }
+
+        .form-select:focus {
           border-color: var(--border-focus);
           box-shadow: 0 0 0 3px rgba(var(--primary-rgb), 0.08);
         }

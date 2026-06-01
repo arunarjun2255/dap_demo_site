@@ -32,6 +32,7 @@ const defaultCustomers = [
     creditScore: 790,
     kycStatus: 'Verified',
     riskGrade: 'Grade B',
+    customerType: 'Business',
     schedule: [
       { emiNo: 12, dueDate: '10 Jun 2026', amount: '₹1,45,000', status: 'Paid' },
       { emiNo: 13, dueDate: '10 Jul 2026', amount: '₹1,45,000', status: 'Pending' },
@@ -49,6 +50,7 @@ const defaultCustomers = [
     creditScore: 815,
     kycStatus: 'Verified',
     riskGrade: 'Grade A',
+    customerType: 'Individual',
     schedule: [
       { emiNo: 48, dueDate: '05 Jun 2026', amount: '₹82,000', status: 'Paid' },
       { emiNo: 49, dueDate: '05 Jul 2026', amount: '₹82,000', status: 'Pending' },
@@ -66,6 +68,7 @@ const defaultCustomers = [
     creditScore: 680,
     kycStatus: 'Verified',
     riskGrade: 'Grade C',
+    customerType: 'Individual',
     schedule: [
       { emiNo: 6, dueDate: '15 Jun 2026', amount: '₹28,500', status: 'Paid' },
       { emiNo: 7, dueDate: '15 Jul 2026', amount: '₹28,500', status: 'Pending' },
@@ -83,6 +86,7 @@ const defaultCustomers = [
     creditScore: 740,
     kycStatus: 'Verified',
     riskGrade: 'Grade B',
+    customerType: 'Business',
     schedule: [
       { emiNo: 24, dueDate: '12 Jun 2026', amount: '₹1,10,000', status: 'Paid' },
       { emiNo: 25, dueDate: '12 Jul 2026', amount: '₹1,10,000', status: 'Pending' },
@@ -100,6 +104,7 @@ const defaultCustomers = [
     creditScore: 610,
     kycStatus: 'Pending',
     riskGrade: 'Grade D',
+    customerType: 'Corporate',
     schedule: [
       { emiNo: 1, dueDate: '25 Jun 2026', amount: '₹48,000', status: 'Pending' },
       { emiNo: 2, dueDate: '25 Jul 2026', amount: '₹48,000', status: 'Pending' }

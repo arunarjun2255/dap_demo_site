@@ -12,7 +12,8 @@ export default function Customer360({ customers = [], globalSearchTerm }) {
   const filteredCustomers = customers.filter(c =>
     c.name.toLowerCase().includes(activeSearch.toLowerCase()) ||
     c.id.toLowerCase().includes(activeSearch.toLowerCase()) ||
-    c.loanProduct.toLowerCase().includes(activeSearch.toLowerCase())
+    c.loanProduct.toLowerCase().includes(activeSearch.toLowerCase()) ||
+    (c.customerType && c.customerType.toLowerCase().includes(activeSearch.toLowerCase()))
   );
 
   const toggleExpand = (id) => {
@@ -92,6 +93,11 @@ export default function Customer360({ customers = [], globalSearchTerm }) {
                   </div>
 
                   <div className="cust-meta-item">
+                    <span className="meta-label">CUSTOMER TYPE</span>
+                    <span className="meta-val">{cust.customerType || 'Individual'}</span>
+                  </div>
+
+                  <div className="cust-meta-item">
                     <span className="meta-label">OUTSTANDING BAL</span>
                     <span className="meta-val outstanding">₹{cust.outstanding} Lakhs</span>
                   </div>
@@ -126,6 +132,10 @@ export default function Customer360({ customers = [], globalSearchTerm }) {
                       {/* Left Column: Contact and Credit */}
                       <div className="details-column">
                         <h5 className="details-title">Demographics & Contact</h5>
+                        <div className="details-row">
+                          <span className="row-lbl">Customer Type:</span>
+                          <span className="row-val">{cust.customerType || 'Individual'}</span>
+                        </div>
                         <div className="details-row">
                           <span className="row-lbl">Email:</span>
                           <span className="row-val">{cust.email}</span>
