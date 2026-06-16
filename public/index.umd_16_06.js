@@ -1811,22 +1811,19 @@ var DAP = (function (exports) {
   function evaluateCondition(condition, inputValue) {
     try {
       let targetValue = inputValue;
-      if (condition.propertyName && condition.propertyName.startsWith("user.")) {
-        targetValue = userContextService.getUserProperty(condition.propertyName) ?? "";
-      }
       let conditionValue = condition.value;
       if (condition.valueType === "Number") {
-        targetValue = typeof targetValue === "string" ? parseFloat(targetValue) : Number(targetValue);
+        targetValue = typeof inputValue === "string" ? parseFloat(inputValue) : Number(inputValue);
         conditionValue = Number(condition.value);
         if (isNaN(targetValue) || isNaN(conditionValue)) {
-          console.warn(`[DAP] Invalid number comparison: ${targetValue} vs ${condition.value}`);
+          console.warn(`[DAP] Invalid number comparison: ${inputValue} vs ${condition.value}`);
           return false;
         }
       } else if (condition.valueType === "Boolean") {
-        targetValue = typeof targetValue === "string" ? targetValue.toLowerCase() === "true" : Boolean(targetValue);
+        targetValue = typeof inputValue === "string" ? inputValue.toLowerCase() === "true" : Boolean(inputValue);
         conditionValue = typeof condition.value === "string" ? condition.value.toLowerCase() === "true" : Boolean(condition.value);
       } else {
-        targetValue = String(targetValue);
+        targetValue = String(inputValue);
         conditionValue = String(condition.value);
       }
       switch (condition.operator) {
@@ -1997,13 +1994,11 @@ var DAP = (function (exports) {
   // src/utils/selectorResolver.ts
   var STRATEGY_PRIORITY = {
     url: 0,
-    // Highest priority — URL validation gate; gates element selection
+    // Highest priority — ensures page-specific element selection
     data: 1,
     // Most specific, set intentionally by the product team
     id: 2,
     // Fast O(1) native lookup, typically unique per page
-    label: 3,
-    // Element label validation; used with other element selectors
     css: 4,
     // Flexible but can be fragile with deep or generated selectors
     xpath: 5
@@ -12671,32 +12666,6 @@ var DAP = (function (exports) {
   // src/utils/previewMode.ts
   var PREVIEW_SESSION_STORAGE_KEY = "dap_preview_session_id";
   var PREVIEW_FLOW_ID_STORAGE_KEY = "dap_preview_flow_id";
-  function clearPreviewSession() {
-    try {
-      sessionStorage.removeItem(PREVIEW_SESSION_STORAGE_KEY);
-      sessionStorage.removeItem(PREVIEW_FLOW_ID_STORAGE_KEY);
-      if (typeof window !== "undefined") {
-        window.postMessage({ source: "DAP_PAGE", type: "DAP_CLEAR_PREVIEW_SESSION" }, "*");
-      }
-      const url = new URL(window.location.href);
-      let changed = false;
-      if (url.searchParams.has("previewSessionId")) {
-        url.searchParams.delete("previewSessionId");
-        changed = true;
-      }
-      if (url.searchParams.has("flowId")) {
-        url.searchParams.delete("flowId");
-        changed = true;
-      }
-      if (changed) {
-        const cleanUrl = url.searchParams.toString() ? `${url.pathname}?${url.searchParams.toString()}${url.hash}` : `${url.pathname}${url.hash}`;
-        window.history.replaceState({}, "", cleanUrl);
-      }
-      console.debug("[DAP] Preview session cleared from storage, URL and extension storage");
-    } catch (error) {
-      console.error("[DAP] Error clearing preview session:", error);
-    }
-  }
   function detectPreviewMode() {
     try {
       const urlParams = new URLSearchParams(window.location.search);
@@ -12838,9 +12807,12 @@ var DAP = (function (exports) {
         this._triggeredOnceSet.delete(key);
       });
     }
+    /**
+     * Re-register all triggers for page context changes
+     */
     reRegisterAllTriggers() {
-      Object.entries(this._registeredTriggers).forEach(([stepId, { trigger, onTrigger, flowContext, stepType }]) => {
-        this.registerTriggerListeners(stepId, trigger, onTrigger, flowContext, stepType);
+      Object.entries(this._registeredTriggers).forEach(([stepId, { trigger, onTrigger, flowContext }]) => {
+        this.registerTriggerListeners(stepId, trigger, onTrigger, flowContext);
       });
     }
     /**
@@ -13744,11 +13716,10 @@ var DAP = (function (exports) {
       this._domObservers = /* @__PURE__ */ new Map();
       this._onFlowEnd = null;
       this._onFlowStart = null;
-      this._onFlowActive = null;
       // CRITICAL FIX 2: Debounced Rule Evaluation System
       this._ruleEvaluationTimers = /* @__PURE__ */ new Map();
-      this._inputStabilityMinLength = 1;
-      // Minimum chars before rule evaluation fires
+      this._inputStabilityMinLength = 2;
+      // Minimum chars before rule evaluation fires (single chars are not meaningful)
       // CRITICAL FIX 3: Input Stability Tracking
       this._lastInputValues = /* @__PURE__ */ new Map();
       this._inputStabilityChecks = /* @__PURE__ */ new Map();
@@ -13782,12 +13753,6 @@ var DAP = (function (exports) {
      */
     setOnFlowStartCallback(cb) {
       this._onFlowStart = cb;
-    }
-    /**
-     * Register a callback that fires whenever a flow becomes active (shows UX).
-     */
-    setOnFlowActiveCallback(cb) {
-      this._onFlowActive = cb;
     }
     /**
      * Sync the active step for a Linear flow when the user navigates to a new page,
@@ -14127,6 +14092,24 @@ var DAP = (function (exports) {
             this.removeStepVisualUX(currentStep);
           }
           this.executeStepWithTrigger(currentStep, this._state.activeStep);
+          if (this._state.activeStep > 0 && this._currentFlow.steps.length > 0) {
+            const firstStep = this._currentFlow.steps[0];
+            const firstStepTrigger = this._triggerManager.resolveTrigger(firstStep);
+            const isLifecycleOrTime = firstStepTrigger?.conditions.some((c) => c.kind === "Lifecycle" || c.kind === "Time");
+            if (isLifecycleOrTime) {
+              console.debug(
+                `[DAP] Linear: Step 0 has lifecycle/time trigger; skipping step 0 restart trigger registration while in progress to prevent progress hijacking`
+              );
+            } else if (this.hasActiveUXExperience()) {
+              console.debug(
+                `[DAP] Linear: Step ${currentStep.stepId} UX is active; deferring step 0 restart trigger registration to avoid overlapping steps`
+              );
+            } else {
+              const firstStep2 = this._currentFlow.steps[0];
+              console.debug(`[DAP] Linear: Registering step 0 restart trigger while at activeStep ${this._state.activeStep}`);
+              this.executeStepWithTrigger(firstStep2, 0);
+            }
+          }
         }
       } else {
         this._currentFlow.steps.forEach((step, index) => {
@@ -14153,30 +14136,6 @@ var DAP = (function (exports) {
         });
       }
       return stateMutated;
-    }
-    /**
-     * Register step 0's trigger to allow flow restart if we are at a subsequent step in Linear mode.
-     */
-    registerStep0RestartTrigger(stepIndex) {
-      if (!this._currentFlow || this._state.executionMode !== "Linear" || this._state.activeStep === 0) return;
-      if (stepIndex === 0) return;
-      if (this._currentFlow.steps.length > 0) {
-        const firstStep = this._currentFlow.steps[0];
-        const firstStepTrigger = this._triggerManager.resolveTrigger(firstStep);
-        if (!firstStepTrigger) {
-          console.debug(`[DAP] Linear: Step 0 has no trigger; skipping restart trigger registration`);
-          return;
-        }
-        const isLifecycleOrTime = firstStepTrigger.conditions.some((c) => c.kind === "Lifecycle" || c.kind === "Time");
-        if (isLifecycleOrTime) {
-          console.debug(
-            `[DAP] Linear: Step 0 has lifecycle/time trigger; skipping step 0 restart trigger registration while in progress to prevent progress hijacking`
-          );
-        } else {
-          console.debug(`[DAP] Linear: Registering step 0 restart trigger while at activeStep ${this._state.activeStep}`);
-          this.executeStepWithTrigger(firstStep, 0);
-        }
-      }
     }
     static getInstance() {
       if (!this._instance) {
@@ -14628,7 +14587,6 @@ var DAP = (function (exports) {
         }
       }
       step = this.withFirstStepGlobalSelectors(step, actualStepIndex);
-      this.registerStep0RestartTrigger(actualStepIndex);
       if (this._state.executionMode === "Linear" && actualStepIndex > 0 && this._currentFlow) {
         for (let i = 0; i < actualStepIndex; i++) {
           if (this._state.inProgressSteps.has(i)) {
@@ -14682,7 +14640,7 @@ var DAP = (function (exports) {
         requestAnimationFrame(tryRaf);
         return;
       }
-      const isSubsequentLinearStep = this._state.executionMode === "Linear" && this._state.activeStep > 0 && actualStepIndex > 0;
+      const isSubsequentLinearStep = this._state.executionMode === "Linear" && this._state.activeStep > 0;
       const trigger = isSubsequentLinearStep ? null : this._triggerManager.resolveTrigger(step);
       if (!trigger) {
         console.debug(`[DAP] Step ${step.stepId}: NO TRIGGER - executing immediately`);
@@ -14700,10 +14658,6 @@ var DAP = (function (exports) {
           this._state.runCounted = true;
         }
         this.executeStepContent(step, actualStepIndex);
-        if (step.conditionRuleBlocks && step.conditionRuleBlocks.length > 0 && step.userInputSelector) {
-          this.setupInputSelectorMutationObserver(step);
-          this.setupInputRuleListeners(step);
-        }
         this.postStepTransition(step);
         return;
       }
@@ -14714,12 +14668,11 @@ var DAP = (function (exports) {
         currentStepActive: isCurrentActiveStep,
         stepIndex: actualStepIndex
       };
-      if (step.conditionRuleBlocks && step.conditionRuleBlocks.length > 0 && step.userInputSelector) {
+      if (!step.uxExperience && step.conditionRuleBlocks && step.conditionRuleBlocks.length > 0 && step.userInputSelector) {
         this.setupInputSelectorMutationObserver(step);
-        this.setupInputRuleListeners(step);
+        this.setupBlurEventHandler(step);
       }
       this._triggerManager.registerTriggerListeners(step.stepId, trigger, (context) => {
-        let shouldRenderUX = true;
         const isLifecycleOrTimeTrigger = trigger.conditions.some((c) => c.kind === "Lifecycle" || c.kind === "Time");
         if (this._state.executionState === "INACTIVE" && isLifecycleOrTimeTrigger) {
           const currentPageId = pageContextService.getPageId();
@@ -14740,6 +14693,12 @@ var DAP = (function (exports) {
           const currentStepIndex = this._state.activeStep;
           const actualStepIndex2 = stepIndex !== void 0 ? stepIndex : currentStepIndex;
           if (actualStepIndex2 === 0 && (currentStepIndex > 0 || !this._state.flowInProgress)) {
+            if (this._state.flowInProgress && this.hasActiveUXExperience(0)) {
+              console.debug(
+                `[DAP] First step restart trigger ignored because another step UX is currently active`
+              );
+              return;
+            }
             console.debug(`[DAP] \u{1F504} First step trigger fired. Restarting flow ${this._currentFlow?.flowId} from step 0.`);
             if (this._currentFlow) {
               this._currentFlow.steps.forEach((s, idx) => {
@@ -14771,23 +14730,17 @@ var DAP = (function (exports) {
             console.debug(`[DAP] Linear Execution Gate: Rejecting trigger for non-current step ${step.stepId} (index ${actualStepIndex2}, current ${currentStepIndex})`);
             return;
           }
-          shouldRenderUX = true;
           if (step.uxExperience && this._state.activeStepTriggered) {
-            console.debug(`[DAP] Linear Execution Gate: UX step ${step.stepId} already triggered, ignoring duplicate trigger for UX`);
-            shouldRenderUX = false;
+            console.debug(`[DAP] Linear Execution Gate: UX step ${step.stepId} already triggered, ignoring duplicate trigger`);
+            return;
           }
-          if (step.conditionRuleBlocks && step.conditionRuleBlocks.length > 0) {
+          if (!step.uxExperience && step.conditionRuleBlocks && step.conditionRuleBlocks.length > 0) {
             const hasActiveDebouncedEvaluation = this._ruleEvaluationTimers.has(step.stepId);
             if (hasActiveDebouncedEvaluation) {
               console.debug(`[DAP] Rule-based step ${step.stepId} already has pending debounced evaluation, clearing previous timer`);
               this.clearRuleEvaluationTimers(step.stepId);
             }
             console.debug(`[DAP] Rule-based step ${step.stepId} re-trigger allowed with new input: "${context.userInput}"`);
-            if (step.uxExperience && !this._state.activeStepTriggered) {
-              this._state.activeStepTriggered = true;
-              this._state.activeStepTriggeredPageId = pageContextService.getPageId();
-              this.saveFlowProgress();
-            }
           } else {
             this._state.activeStepTriggered = true;
             this._state.activeStepTriggeredPageId = pageContextService.getPageId();
@@ -14799,10 +14752,8 @@ var DAP = (function (exports) {
           this.incrementFlowRunCount(this._currentFlow);
           this._state.runCounted = true;
         }
-        if (shouldRenderUX) {
-          this.executeStepContent(step, actualStepIndex);
-        }
-        if (step.conditionRuleBlocks && step.conditionRuleBlocks.length > 0) {
+        this.executeStepContent(step, actualStepIndex);
+        if (!step.uxExperience && step.conditionRuleBlocks && step.conditionRuleBlocks.length > 0) {
           console.debug(`[DAP] Step ${step.stepId} is rule-based - applying smart evaluation logic`);
           if (step.userInputSelector) {
             const inputEl = resolveSelectorWithPriority(step.userInputSelector);
@@ -14831,7 +14782,7 @@ var DAP = (function (exports) {
           this.postStepTransition(step);
         }
       }, flowContext, step.stepType);
-      if (this._state.pendingUXResume && step.uxExperience && actualStepIndex === this._state.activeStep) {
+      if (this._state.pendingUXResume && step.uxExperience) {
         this._state.pendingUXResume = false;
         this._state.activeStepTriggered = true;
         this._state.activeStepTriggeredPageId = pageContextService.getPageId();
@@ -14908,13 +14859,12 @@ var DAP = (function (exports) {
       console.debug(
         `[DAP] AnyOrder: Step ${step.stepId} page context active \u2014 registering trigger`
       );
-      const hasRuleBlocks = step.conditionRuleBlocks != null && step.conditionRuleBlocks.length > 0;
-      const isRuleBasedStep = !step.uxExperience && hasRuleBlocks;
-      if (hasRuleBlocks) {
+      const isRuleBasedStep = !step.uxExperience && step.conditionRuleBlocks != null && step.conditionRuleBlocks.length > 0;
+      if (isRuleBasedStep) {
         if (step.userInputSelector) {
           this.setupInputSelectorMutationObserver(step);
         }
-        this.setupInputRuleListeners(step);
+        this.setupBlurEventHandler(step);
       }
       const flowContext = {
         mode: this._state.executionMode,
@@ -15274,9 +15224,6 @@ var DAP = (function (exports) {
      * Execute the actual step content (UX experience)
      */
     executeStepContent(step, stepIndex) {
-      if (this._state.activeFlowId) {
-        this._onFlowActive?.(this._state.activeFlowId);
-      }
       if (this._state.activeFlowId && !step.uxExperience) {
         trackStepView(this._state.activeFlowId, step.stepId);
       }
@@ -15320,9 +15267,6 @@ var DAP = (function (exports) {
      * Different input types have different optimal evaluation patterns
      */
     shouldEvaluateRulesForTriggerSource(step, triggerSource) {
-      if (triggerSource === "debounced_input") {
-        return true;
-      }
       if (!step.userInputSelector) {
         console.debug(`[DAP] No input selector, allowing rule evaluation`);
         return true;
@@ -15343,8 +15287,8 @@ var DAP = (function (exports) {
         case "search":
         case "url":
         case "tel":
-          console.debug(`[DAP] \u{1F4DD} Text-based input: Rules evaluate on blur, input, change, click`);
-          return triggerSource === "blur" || triggerSource === "click" || triggerSource === "manual" || triggerSource === "input" || triggerSource === "change";
+          console.debug(`[DAP] \u{1F4DD} Text-based input: Rules evaluate on blur/focus-out OR deliberate click`);
+          return triggerSource === "blur" || triggerSource === "click" || triggerSource === "manual";
         case "select":
         case "select-one":
         case "select-multiple":
@@ -15487,63 +15431,68 @@ var DAP = (function (exports) {
       this.executeStepWithTrigger(step, this._state.activeStep);
     }
     /**
-     * CRITICAL FIX: Setup rule listeners (blur, input, change) for rule evaluation
-     * 🚨 ENHANCED: Monitors input in real-time, allowing instant branching on single keypresses (debounced)
+     * CRITICAL FIX: Setup blur event handler for rule evaluation on focus out
+     * 🚨 ENHANCED: This is the PRIMARY method for rule evaluation in rule-based steps
+     * Rules evaluate ONLY when user finishes input and moves focus away
      */
-    setupInputRuleListeners(step) {
+    setupBlurEventHandler(step) {
       if (!step.userInputSelector) return;
-      console.debug(`[DAP] \u{1F3AF} Setting up input rule listeners for step ${step.stepId}`);
+      console.debug(`[DAP] \u{1F3AF} Setting up PRIMARY blur event handler for rule-based step ${step.stepId}`);
+      console.debug(`[DAP] \u{1F4CB} Rules will evaluate ONLY on blur/focus-out events, not during typing`);
       const cancelWait = this.waitForInputElement(step.userInputSelector, (inputElement) => {
-        console.debug(`[DAP] \u2705 Input element found for rule listeners, setting up listeners`);
-        const evaluateHandler = (event) => {
-          const source = event.type;
+        console.debug(`[DAP] \u2705 Input element found for blur handler, setting up listener`);
+        const blurHandler = () => {
+          console.debug(`[DAP] \uFFFD PRIMARY BLUR EVENT - User finished input and moved focus away from step ${step.stepId}`);
           const currentValue = inputElement.value;
-          console.debug(`[DAP] \u{1F3AF} INPUT RULE EVENT (${source.toUpperCase()}): Input value for rule evaluation: "${currentValue}"`);
+          console.debug(`[DAP] \u{1F3AF} BLUR EVALUATION: Input value for rule evaluation: "${currentValue}"`);
+          console.debug(`[DAP] \u{1F50D} BLUR EVENT STATE CHECK:`);
+          console.debug(`[DAP] - Current flow exists: ${!!this._currentFlow}`);
+          console.debug(`[DAP] - Active step index: ${this._state.activeStep}`);
+          console.debug(`[DAP] - Total steps: ${this._currentFlow?.steps?.length || 0}`);
+          console.debug(`[DAP] - Step being checked: ${step.stepId}`);
           if (!this._currentFlow) {
-            console.debug(`[DAP] \u274C No active flow, ignoring event`);
+            console.debug(`[DAP] \u274C No active flow, ignoring blur event`);
             return;
           }
           const stepExists = this._currentFlow.steps.some((s) => s.stepId === step.stepId);
           if (!stepExists) {
-            console.debug(`[DAP] \u274C Step ${step.stepId} not found in current flow, ignoring event`);
+            console.debug(`[DAP] \u274C Step ${step.stepId} not found in current flow, ignoring blur event`);
             return;
           }
           const stepIndex = this._currentFlow.steps.findIndex((s) => s.stepId === step.stepId);
           if (stepIndex === -1) {
-            console.debug(`[DAP] \u274C Could not find step index for ${step.stepId}, ignoring event`);
+            console.debug(`[DAP] \u274C Could not find step index for ${step.stepId}, ignoring blur event`);
             return;
           }
           if (this._state.executionMode === "Linear") {
             const isCurrentOrRecentStep = stepIndex === this._state.activeStep;
             if (!isCurrentOrRecentStep) {
-              console.debug(`[DAP] \u274C Step ${step.stepId} is no longer the active step (${stepIndex} vs ${this._state.activeStep}), ignoring event`);
+              console.debug(`[DAP] \u274C Step ${step.stepId} is no longer the active step (${stepIndex} vs ${this._state.activeStep}), ignoring blur event`);
               return;
             }
           } else {
             if (this._state.triggeredSteps.has(stepIndex)) {
-              console.debug(`[DAP] \u274C AnyOrder step ${step.stepId} already triggered, ignoring event`);
+              console.debug(`[DAP] \u274C AnyOrder step ${step.stepId} already triggered, ignoring blur event`);
               return;
             }
           }
           console.debug(`[DAP] \u2705 Step validation passed - proceeding with rule evaluation`);
           this._currentFlow.steps[stepIndex];
           this.clearRuleEvaluationTimers(step.stepId);
-          this.evaluateStepRulesWithValue(step, currentValue, source);
+          console.debug(`[DAP] \u{1F3AF} EXECUTING PRIMARY RULE EVALUATION on blur for step ${step.stepId}`);
+          console.debug(`[DAP] \u{1F4A1} User has finished typing and moved focus - perfect time for rule evaluation`);
+          this.evaluateStepRulesWithValue(step, currentValue, "blur");
         };
-        inputElement.addEventListener("blur", evaluateHandler);
-        inputElement.addEventListener("input", evaluateHandler);
-        inputElement.addEventListener("change", evaluateHandler);
+        inputElement.addEventListener("blur", blurHandler);
         const existingCleanup = this._stepTriggerListeners.get(`${step.stepId}_blur`);
         if (existingCleanup) {
           existingCleanup();
         }
         this._stepTriggerListeners.set(`${step.stepId}_blur`, () => {
-          inputElement.removeEventListener("blur", evaluateHandler);
-          inputElement.removeEventListener("input", evaluateHandler);
-          inputElement.removeEventListener("change", evaluateHandler);
-          console.debug(`[DAP] Cleaned up rule input event listeners for step ${step.stepId}`);
+          inputElement.removeEventListener("blur", blurHandler);
+          console.debug(`[DAP] Cleaned up blur event listener for step ${step.stepId}`);
         });
-        console.debug(`[DAP] \u2705 Input rule listeners registered for step ${step.stepId}`);
+        console.debug(`[DAP] \u2705 Blur event handler registered for step ${step.stepId}`);
       });
       const existingWaitCancel = this._stepTriggerListeners.get(`${step.stepId}_waitCancel`);
       if (existingWaitCancel) existingWaitCancel();
@@ -15602,27 +15551,6 @@ var DAP = (function (exports) {
         console.warn(`[DAP] \u{1F3AF} Trigger source "${source}" not appropriate for this input type`);
         return;
       }
-      const inputElement = step.userInputSelector ? resolveSelectorWithPriority(step.userInputSelector) : null;
-      const inputType = inputElement ? this.getInputElementType(inputElement) : "unknown";
-      const isTextInput = ["text", "email", "password", "textarea", "number", "search", "url", "tel"].includes(inputType);
-      if (isTextInput && (source === "input" || source === "change")) {
-        this.clearRuleEvaluationTimers(step.stepId);
-        console.debug(`[DAP] \u23F3 Debouncing rule evaluation for step ${step.stepId} (300ms)`);
-        const timerId = window.setTimeout(() => {
-          this._ruleEvaluationTimers.delete(step.stepId);
-          this.runRuleEvaluationInternal(step, inputValue, "debounced_input");
-        }, 300);
-        this._ruleEvaluationTimers.set(step.stepId, timerId);
-        return;
-      }
-      this.clearRuleEvaluationTimers(step.stepId);
-      this.runRuleEvaluationInternal(step, inputValue, source);
-    }
-    /**
-     * Internal helper to execute the rule blocks evaluation
-     */
-    runRuleEvaluationInternal(step, inputValue, triggerSource) {
-      const source = triggerSource;
       if (source === "blur" && !this.isInputValueStable(step.stepId, inputValue)) {
         console.debug(`[DAP] \u23F3 Input not yet stable for step ${step.stepId} \u2014 deferring rule evaluation`);
         return;
@@ -15704,10 +15632,6 @@ var DAP = (function (exports) {
     handleRuleEvaluationFailure(step, reason, error) {
       console.warn(`[DAP] \u{1F6A8} FALLBACK LOGIC: Rule evaluation failed for step ${step.stepId}, reason: ${reason}`);
       console.debug(`[DAP] Step type: ${step.stepType || "Not specified"}`);
-      if (step.uxExperience) {
-        console.debug(`[DAP] Step ${step.stepId} has UX experience, staying on step for user interaction after evaluation failure`);
-        return;
-      }
       const shouldBlockOnFailure = step.blockOnRuleFailure === true;
       if (shouldBlockOnFailure) {
         console.warn(`[DAP] \u26A0\uFE0F BLOCKING STEP: ${step.stepId} configured to block on rule failures`);
@@ -15733,10 +15657,6 @@ var DAP = (function (exports) {
     handleNoRuleMatch(step, inputValue) {
       console.debug(`[DAP] \u{1F504} FALLBACK LOGIC: No rule matched for input "${inputValue}" in step ${step.stepId}`);
       console.debug(`[DAP] Step type: ${step.stepType || "Not specified"}`);
-      if (step.uxExperience) {
-        console.debug(`[DAP] Step ${step.stepId} has UX experience, staying on step for user interaction`);
-        return;
-      }
       const shouldBlockOnNoMatch = step.blockOnNoRuleMatch === true;
       if (shouldBlockOnNoMatch) {
         console.debug(`[DAP] \u26A0\uFE0F BLOCKING STEP: ${step.stepId} configured to block when no rules match, staying on current step`);
@@ -17410,19 +17330,6 @@ var DAP = (function (exports) {
           console.debug(`[DAP] MultiFlowOrchestrator: Flow ${fid} started/restarted, status \u2192 active`);
         }
       });
-      engine.setOnFlowActiveCallback((fid) => {
-        if (engine.getState().executionMode === "Linear") {
-          for (const [otherId, otherFlow] of this._flows.entries()) {
-            if (otherId !== fid && otherFlow.status === "active" && otherFlow.engine.getState().executionMode === "Linear") {
-              const otherState = otherFlow.engine.getState();
-              if (otherState.flowInProgress && (otherState.triggeredSteps.size > 0 || otherState.activeStepTriggered || otherState.inProgressSteps.size > 0)) {
-                console.debug(`[DAP] MultiFlowOrchestrator: Aborting concurrent Linear flow ${otherId} due to activity on ${fid}`);
-                otherFlow.engine.abortFlow();
-              }
-            }
-          }
-        }
-      });
       engine.setOnFlowEndCallback((fid, reason) => {
         const m = this._flows.get(fid);
         if (m) {
@@ -18650,12 +18557,6 @@ var DAP = (function (exports) {
       return [];
     }
   }
-  function clearCrossSiteFlowTracking() {
-    try {
-      sessionStorage.removeItem(ACTIVE_FLOWS_KEY);
-    } catch {
-    }
-  }
   async function init(opts) {
     const { configUrl, debug, screenId, user } = opts || {};
     window.__DAP_DEBUG__ = !!debug;
@@ -18800,7 +18701,6 @@ var DAP = (function (exports) {
       return;
     } else {
       _previewSessionId = null;
-      clearPreviewSession();
     }
     const cachedFlowData = [];
     try {
@@ -18933,7 +18833,7 @@ var DAP = (function (exports) {
                 log(`Using cached flowOrigin from snapshot for fetching flow ${flowId}: ${fetchOrigin}`);
               }
             }
-          } catch {
+          } catch (e) {
           }
           rawFlowData = await fetchFlowById(
             _dapConfig,
@@ -19065,7 +18965,6 @@ var DAP = (function (exports) {
           console.debug(`[DAP] All flow session runs reset (${sessionKeysToRemove.length} session keys cleared)`);
         } catch {
         }
-        clearCrossSiteFlowTracking();
         console.debug(`[DAP] All flow run counts reset (${keysToRemove.length} keys cleared)`);
       }
     } catch (error) {
