@@ -18801,7 +18801,7 @@ var DAP = (function (exports) {
       try {
         await retryWithBackoff(async () => {
           const headers = {
-            "X-API-KEY": this.config.apiKey,
+            "X-Api-Key": this.config.apiKey,
             "Content-Type": "application/json"
           };
           if (typeof window !== "undefined" && window.location) {
@@ -18902,7 +18902,7 @@ var DAP = (function (exports) {
       const endpoint = `${base}/organizations/${this.config.organizationId}/licensing/entitlements`;
       const data = await retryWithBackoff(async () => {
         const headers = {
-          "X-API-KEY": this.config.apiKey,
+          "X-Api-Key": this.config.apiKey,
           "Accept": "application/json"
         };
         if (typeof window !== "undefined" && window.location) {
