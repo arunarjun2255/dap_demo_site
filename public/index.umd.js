@@ -19297,6 +19297,38 @@ var DAP = (function (exports) {
       return;
     }
     log("CORS check passed, proceeding with SDK initialization");
+    if (dap.sdk) {
+      log("Destroying existing SDK instance...");
+      try {
+        dap.sdk.destroy();
+      } catch (e) {
+        log("Error destroying SDK instance:", e);
+      }
+    }
+    const sdkConfig = {
+      apiBaseUrl: cfg.apiurl,
+      apiKey: cfg.apikey,
+      organizationId: cfg.organizationid,
+      siteCollectionId: cfg.siteid,
+      moduleKey: opts.moduleKey || "dap-sdk",
+      enableTelemetry: opts.enableTelemetry !== void 0 ? opts.enableTelemetry : cfg.enableTelemetry,
+      enableMetering: opts.enableMetering !== void 0 ? opts.enableMetering : cfg.enableMetering,
+      enableLicensing: opts.enableLicensing !== void 0 ? opts.enableLicensing : cfg.enableLicensing,
+      flushInterval: opts.flushInterval || cfg.flushInterval,
+      maxQueueSize: opts.maxQueueSize || cfg.maxQueueSize
+    };
+    try {
+      log("Initializing reusable SDK modules (Telemetry, Licensing, Metering)...");
+      const sdkInstance = new SDK(sdkConfig);
+      await sdkInstance.initialize();
+      dap.sdk = sdkInstance;
+      dap.telemetry = sdkInstance.telemetry;
+      dap.metering = sdkInstance.metering;
+      dap.licensing = sdkInstance.licensing;
+      log("Reusable SDK modules initialized successfully");
+    } catch (sdkErr) {
+      console.error("[DAP] Failed to initialize reusable SDK modules:", sdkErr);
+    }
     let resumeFlowId = null;
     let resumeStepIndex = null;
     if (typeof window !== "undefined") {
