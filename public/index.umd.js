@@ -12773,7 +12773,12 @@ var DAP = (function (exports) {
           orgId = config.organizationid;
           record.orgId = orgId;
         }
-        if (!orgId) {
+        let siteCollectionId = record.event.siteCollectionId;
+        if (!siteCollectionId && config?.siteid) {
+          siteCollectionId = config.siteid;
+          record.event.siteCollectionId = siteCollectionId;
+        }
+        if (!orgId || !siteCollectionId) {
           unresolvableRecords.push(record);
           continue;
         }
@@ -12790,30 +12795,31 @@ var DAP = (function (exports) {
           } catch {
           }
         }
-        if (!record.event.siteCollectionId && config?.siteid) {
-          record.event.siteCollectionId = config.siteid;
+        const key = `${orgId}:${siteCollectionId}`;
+        if (!groups[key]) {
+          groups[key] = [];
         }
-        if (!groups[orgId]) {
-          groups[orgId] = [];
-        }
-        groups[orgId].push(record);
+        groups[key].push(record);
       }
       const remainingQueue = [...unresolvableRecords];
-      const sendPromises = Object.entries(groups).map(async ([orgId, records]) => {
+      const sendPromises = Object.entries(groups).map(async ([compoundKey, records]) => {
+        const [orgId, siteCollectionId] = compoundKey.split(":");
         const requestId = `req_player_${generateUlid()}`;
         const payload = {
           requestId,
           events: records.map((r) => r.event)
         };
         const base = getBaseUrl(config?.apiurl || "");
-        const url = `${base}/telemetry/organizations/${encodeURIComponent(orgId)}/events`;
+        const url = `${base}/telemetry/organizations/${encodeURIComponent(orgId)}/site-collections/${encodeURIComponent(siteCollectionId)}/events`;
         try {
           if (config?.debug || window.__DAP_DEBUG__) {
             console.debug(`[DAP Telemetry] POST to ${url} for requestId: ${requestId}`, payload);
           }
           await http(config, url, {
             method: "POST",
-            body: payload
+            body: payload,
+            hostBase: typeof window !== "undefined" ? window.location.origin : "",
+            includeHostHeader: true
           });
           if (config?.debug || window.__DAP_DEBUG__) {
             console.debug(`[DAP Telemetry] Batch ${requestId} sent successfully.`);
@@ -12837,21 +12843,24 @@ var DAP = (function (exports) {
       const groups = {};
       for (const record of this._inMemoryQueue) {
         const orgId = record.orgId || config.organizationid;
-        if (orgId) {
-          if (!groups[orgId]) {
-            groups[orgId] = [];
+        const siteCollectionId = record.event.siteCollectionId || config.siteid;
+        if (orgId && siteCollectionId) {
+          const key = `${orgId}:${siteCollectionId}`;
+          if (!groups[key]) {
+            groups[key] = [];
           }
-          groups[orgId].push(record);
+          groups[key].push(record);
         }
       }
-      for (const [orgId, records] of Object.entries(groups)) {
+      for (const [compoundKey, records] of Object.entries(groups)) {
+        const [orgId, siteCollectionId] = compoundKey.split(":");
         const requestId = `req_player_${generateUlid()}`;
         const payload = {
           requestId,
           events: records.map((r) => r.event)
         };
         const base = getBaseUrl(config.apiurl || "");
-        const url = `${base}/telemetry/organizations/${encodeURIComponent(orgId)}/events`;
+        const url = `${base}/telemetry/organizations/${encodeURIComponent(orgId)}/site-collections/${encodeURIComponent(siteCollectionId)}/events`;
         try {
           const bodyStr = JSON.stringify(payload);
           if (typeof navigator !== "undefined" && navigator.sendBeacon) {
@@ -13136,18 +13145,44 @@ var DAP = (function (exports) {
      */
     async init(config) {
       this._config = config;
-      const { organizationid, apiurl } = config;
+      const { organizationid, apiurl, siteid } = config;
       if (!organizationid || !apiurl) {
         console.warn("[DAP Licensing] Missing config for licensing, entering fallback (fail-open) mode");
         this._fallbackMode = true;
         return;
       }
       const entitlementsUrl = `${getBaseUrl2(apiurl)}/organizations/${organizationid}/licensing/entitlements`;
-      console.debug(`[DAP Licensing] Fetching entitlements from: ${entitlementsUrl}`);
+      const siteEntitlementsUrl = `${getBaseUrl2(apiurl)}/organizations/${organizationid}/site-collections/${siteid}/licensing/entitlements`;
+      console.debug(`[DAP Licensing] Fetching entitlements. Org URL: ${entitlementsUrl}, Site URL: ${siteEntitlementsUrl}`);
+      const headers = {
+        "Accept": "application/json",
+        "X-Site-Collection-Id": siteid || "",
+        "X-Site-Id": siteid || "",
+        "X-SiteCollection-Id": siteid || ""
+      };
       try {
-        const response = await http(config, entitlementsUrl, {
-          method: "GET"
-        });
+        let response;
+        try {
+          console.debug(`[DAP Licensing] Attempting primary entitlements fetch from org endpoint`);
+          response = await http(config, entitlementsUrl, {
+            method: "GET",
+            headers,
+            hostBase: typeof window !== "undefined" ? window.location.origin : "",
+            includeHostHeader: true
+          });
+        } catch (err) {
+          if (err?.status === 401 || err?.status === 403 || err?.status === 404) {
+            console.debug(`[DAP Licensing] Org endpoint returned ${err?.status}. Retrying with site-collection scoped endpoint.`);
+            response = await http(config, siteEntitlementsUrl, {
+              method: "GET",
+              headers,
+              hostBase: typeof window !== "undefined" ? window.location.origin : "",
+              includeHostHeader: true
+            });
+          } else {
+            throw err;
+          }
+        }
         if (response) {
           this.parseEntitlements(response);
           this._isLoaded = true;
@@ -13252,11 +13287,38 @@ var DAP = (function (exports) {
      */
     async getEnforcementEvents() {
       if (!this._config) return [];
-      const { organizationid, apiurl } = this._config;
+      const { organizationid, apiurl, siteid } = this._config;
       if (!organizationid || !apiurl) return [];
       const url = `${getBaseUrl2(apiurl)}/organizations/${organizationid}/licensing/enforcement-events`;
+      const siteUrl = `${getBaseUrl2(apiurl)}/organizations/${organizationid}/site-collections/${siteid}/licensing/enforcement-events`;
+      const headers = {
+        "Accept": "application/json",
+        "X-Site-Collection-Id": siteid || "",
+        "X-Site-Id": siteid || "",
+        "X-SiteCollection-Id": siteid || ""
+      };
       try {
-        const response = await http(this._config, url, { method: "GET" });
+        let response;
+        try {
+          response = await http(this._config, url, {
+            method: "GET",
+            headers,
+            hostBase: typeof window !== "undefined" ? window.location.origin : "",
+            includeHostHeader: true
+          });
+        } catch (err) {
+          if (err?.status === 401 || err?.status === 403 || err?.status === 404) {
+            console.debug(`[DAP Licensing] Enforcement-events org endpoint returned ${err?.status}. Retrying with site-collection scoped endpoint.`);
+            response = await http(this._config, siteUrl, {
+              method: "GET",
+              headers,
+              hostBase: typeof window !== "undefined" ? window.location.origin : "",
+              includeHostHeader: true
+            });
+          } else {
+            throw err;
+          }
+        }
         return Array.isArray(response) ? response : response?.events || [];
       } catch (err) {
         console.warn("[DAP Licensing] Failed to query enforcement events:", err);
