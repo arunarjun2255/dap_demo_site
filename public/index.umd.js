@@ -12506,6 +12506,19 @@ var DAP = (function (exports) {
   LocationContextService.getInstance();
 
   // src/services/telemetryService.ts
+  function getBaseUrl(apiurl) {
+    const base = apiurl.replace(/\/$/, "");
+    if (base.endsWith("/api/v1")) {
+      return base;
+    }
+    if (base.endsWith("/api")) {
+      return base + "/v1";
+    }
+    if (base.endsWith("/v1")) {
+      return base;
+    }
+    return base + "/api/v1";
+  }
   function generateUlid() {
     const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
     let now = Date.now();
@@ -12792,8 +12805,8 @@ var DAP = (function (exports) {
           requestId,
           events: records.map((r) => r.event)
         };
-        const base = (config?.apiurl || "").replace(/\/$/, "");
-        const url = `${base}/api/v1/telemetry/organizations/${encodeURIComponent(orgId)}/events`;
+        const base = getBaseUrl(config?.apiurl || "");
+        const url = `${base}/telemetry/organizations/${encodeURIComponent(orgId)}/events`;
         try {
           if (config?.debug || window.__DAP_DEBUG__) {
             console.debug(`[DAP Telemetry] POST to ${url} for requestId: ${requestId}`, payload);
@@ -12837,8 +12850,8 @@ var DAP = (function (exports) {
           requestId,
           events: records.map((r) => r.event)
         };
-        const base = (config.apiurl || "").replace(/\/$/, "");
-        const url = `${base}/api/v1/telemetry/organizations/${encodeURIComponent(orgId)}/events`;
+        const base = getBaseUrl(config.apiurl || "");
+        const url = `${base}/telemetry/organizations/${encodeURIComponent(orgId)}/events`;
         try {
           const bodyStr = JSON.stringify(payload);
           if (typeof navigator !== "undefined" && navigator.sendBeacon) {
@@ -13090,6 +13103,19 @@ var DAP = (function (exports) {
   }
 
   // src/services/licensingService.ts
+  function getBaseUrl2(apiurl) {
+    const base = apiurl.replace(/\/$/, "");
+    if (base.endsWith("/api/v1")) {
+      return base;
+    }
+    if (base.endsWith("/api")) {
+      return base + "/v1";
+    }
+    if (base.endsWith("/v1")) {
+      return base;
+    }
+    return base + "/api/v1";
+  }
   var _LicensingService = class _LicensingService {
     constructor() {
       this._config = null;
@@ -13116,7 +13142,7 @@ var DAP = (function (exports) {
         this._fallbackMode = true;
         return;
       }
-      const entitlementsUrl = `${apiurl.replace(/\/$/, "")}/api/v1/organizations/${organizationid}/licensing/entitlements`;
+      const entitlementsUrl = `${getBaseUrl2(apiurl)}/organizations/${organizationid}/licensing/entitlements`;
       console.debug(`[DAP Licensing] Fetching entitlements from: ${entitlementsUrl}`);
       try {
         const response = await http(config, entitlementsUrl, {
@@ -13228,7 +13254,7 @@ var DAP = (function (exports) {
       if (!this._config) return [];
       const { organizationid, apiurl } = this._config;
       if (!organizationid || !apiurl) return [];
-      const url = `${apiurl.replace(/\/$/, "")}/api/v1/organizations/${organizationid}/licensing/enforcement-events`;
+      const url = `${getBaseUrl2(apiurl)}/organizations/${organizationid}/licensing/enforcement-events`;
       try {
         const response = await http(this._config, url, { method: "GET" });
         return Array.isArray(response) ? response : response?.events || [];
