@@ -108,6 +108,7 @@ var DAP = (function (exports) {
     const method = (opts.method || "GET").toUpperCase();
     const headers = {
       "X-Api-Key": cfg.apikey,
+      "X-API-Key": cfg.apikey,
       ...opts.includeHostHeader && opts.hostBase ? { "X-Host-Url": opts.hostBase } : {},
       ...opts.headers || {}
     };
@@ -13152,8 +13153,7 @@ var DAP = (function (exports) {
         return;
       }
       const entitlementsUrl = `${getBaseUrl2(apiurl)}/organizations/${organizationid}/licensing/entitlements`;
-      const siteEntitlementsUrl = `${getBaseUrl2(apiurl)}/organizations/${organizationid}/site-collections/${siteid}/licensing/entitlements`;
-      console.debug(`[DAP Licensing] Fetching entitlements. Org URL: ${entitlementsUrl}, Site URL: ${siteEntitlementsUrl}`);
+      console.debug(`[DAP Licensing] Fetching entitlements from: ${entitlementsUrl}`);
       const headers = {
         "Accept": "application/json",
         "X-Site-Collection-Id": siteid || "",
@@ -13161,28 +13161,12 @@ var DAP = (function (exports) {
         "X-SiteCollection-Id": siteid || ""
       };
       try {
-        let response;
-        try {
-          console.debug(`[DAP Licensing] Attempting primary entitlements fetch from org endpoint`);
-          response = await http(config, entitlementsUrl, {
-            method: "GET",
-            headers,
-            hostBase: typeof window !== "undefined" ? window.location.origin : "",
-            includeHostHeader: true
-          });
-        } catch (err) {
-          if (err?.status === 401 || err?.status === 403 || err?.status === 404) {
-            console.debug(`[DAP Licensing] Org endpoint returned ${err?.status}. Retrying with site-collection scoped endpoint.`);
-            response = await http(config, siteEntitlementsUrl, {
-              method: "GET",
-              headers,
-              hostBase: typeof window !== "undefined" ? window.location.origin : "",
-              includeHostHeader: true
-            });
-          } else {
-            throw err;
-          }
-        }
+        const response = await http(config, entitlementsUrl, {
+          method: "GET",
+          headers,
+          hostBase: typeof window !== "undefined" ? window.location.origin : "",
+          includeHostHeader: true
+        });
         if (response) {
           this.parseEntitlements(response);
           this._isLoaded = true;
@@ -13290,7 +13274,6 @@ var DAP = (function (exports) {
       const { organizationid, apiurl, siteid } = this._config;
       if (!organizationid || !apiurl) return [];
       const url = `${getBaseUrl2(apiurl)}/organizations/${organizationid}/licensing/enforcement-events`;
-      const siteUrl = `${getBaseUrl2(apiurl)}/organizations/${organizationid}/site-collections/${siteid}/licensing/enforcement-events`;
       const headers = {
         "Accept": "application/json",
         "X-Site-Collection-Id": siteid || "",
@@ -13298,27 +13281,12 @@ var DAP = (function (exports) {
         "X-SiteCollection-Id": siteid || ""
       };
       try {
-        let response;
-        try {
-          response = await http(this._config, url, {
-            method: "GET",
-            headers,
-            hostBase: typeof window !== "undefined" ? window.location.origin : "",
-            includeHostHeader: true
-          });
-        } catch (err) {
-          if (err?.status === 401 || err?.status === 403 || err?.status === 404) {
-            console.debug(`[DAP Licensing] Enforcement-events org endpoint returned ${err?.status}. Retrying with site-collection scoped endpoint.`);
-            response = await http(this._config, siteUrl, {
-              method: "GET",
-              headers,
-              hostBase: typeof window !== "undefined" ? window.location.origin : "",
-              includeHostHeader: true
-            });
-          } else {
-            throw err;
-          }
-        }
+        const response = await http(this._config, url, {
+          method: "GET",
+          headers,
+          hostBase: typeof window !== "undefined" ? window.location.origin : "",
+          includeHostHeader: true
+        });
         return Array.isArray(response) ? response : response?.events || [];
       } catch (err) {
         console.warn("[DAP Licensing] Failed to query enforcement events:", err);
