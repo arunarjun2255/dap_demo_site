@@ -108,7 +108,7 @@ var DAP = (function (exports) {
     const method = (opts.method || "GET").toUpperCase();
     const headers = {
       "X-Api-Key": cfg.apikey,
-      ...opts.includeHostHeader && opts.hostBase ? { "X-Host-Url": opts.hostBase } : {},
+      ...opts.includeHostHeader && opts.hostBase ? { "X-Host-Url": opts.hostBase.replace(/^https?:\/\//i, "").split("/")[0] } : {},
       ...opts.headers || {}
     };
     let bodyInit;
@@ -12647,7 +12647,7 @@ var DAP = (function (exports) {
         await http(config, url, {
           method: "POST",
           body: payload,
-          hostBase: typeof window !== "undefined" ? window.location.origin : "",
+          hostBase: typeof window !== "undefined" ? window.location.hostname : "",
           includeHostHeader: true
         });
         console.debug(`[DAP Telemetry] Event "${eventName}" sent successfully`);
@@ -12869,7 +12869,7 @@ var DAP = (function (exports) {
       try {
         const response = await http(config, entitlementsUrl, {
           method: "GET",
-          hostBase: typeof window !== "undefined" ? window.location.origin : "",
+          hostBase: typeof window !== "undefined" ? window.location.hostname : "",
           includeHostHeader: true
         });
         if (response) {
@@ -12983,7 +12983,7 @@ var DAP = (function (exports) {
       try {
         const response = await http(this._config, url, {
           method: "GET",
-          hostBase: typeof window !== "undefined" ? window.location.origin : "",
+          hostBase: typeof window !== "undefined" ? window.location.hostname : "",
           includeHostHeader: true
         });
         return Array.isArray(response) ? response : response?.events || [];
