@@ -108,7 +108,6 @@ var DAP = (function (exports) {
     const method = (opts.method || "GET").toUpperCase();
     const headers = {
       "X-Api-Key": cfg.apikey,
-      "X-API-Key": cfg.apikey,
       ...opts.includeHostHeader && opts.hostBase ? { "X-Host-Url": opts.hostBase } : {},
       ...opts.headers || {}
     };
@@ -122,15 +121,7 @@ var DAP = (function (exports) {
     const t = setTimeout(() => c.abort(), opts.timeoutMs ?? 15e3);
     let res;
     try {
-      res = await fetch(url, {
-        method,
-        headers,
-        body: bodyInit,
-        signal: c.signal,
-        credentials: "omit",
-        cache: "no-cache",
-        ...opts.keepalive !== void 0 ? { keepalive: opts.keepalive } : {}
-      });
+      res = await fetch(url, { method, headers, body: bodyInit, signal: c.signal, credentials: "omit", cache: "no-cache" });
     } catch (err) {
       clearTimeout(t);
       throw err;
@@ -12515,13 +12506,6 @@ var DAP = (function (exports) {
   LocationContextService.getInstance();
 
   // src/services/telemetryService.ts
-  function getBaseUrl(apiurl) {
-    let base = apiurl.replace(/\/$/, "");
-    if (!base.endsWith("/v1") && !base.includes("/v1/")) {
-      base = `${base}/v1`;
-    }
-    return base;
-  }
   function generateUlid() {
     const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
     let now = Date.now();
@@ -12561,11 +12545,15 @@ var DAP = (function (exports) {
     constructor() {
       this._config = null;
       this._sessionId = null;
-      this._queue = [];
-      this._flushTimer = null;
+      this._isInitialized = false;
+      this._inMemoryQueue = [];
+      this._intervalId = null;
+      this._isFlushing = false;
+      this._pendingEvents = [];
+      this.STORAGE_KEY = "dap_telemetry_event_queue";
       this.SESSION_ID_KEY = "dap_player_session_id";
+      this.BATCH_INTERVAL_MS = 6e4;
       this.initializeSession();
-      this.setupUnloadListener();
     }
     static getInstance() {
       if (!this._instance) {
@@ -12574,10 +12562,13 @@ var DAP = (function (exports) {
       return this._instance;
     }
     /**
-     * Set configuration
+     * Set configuration and initialize background services
      */
     setConfig(config) {
       this._config = config;
+      if (!this._isInitialized) {
+        this.initializeService();
+      }
     }
     /**
      * Initialize or retrieve the session ID
@@ -12607,100 +12598,322 @@ var DAP = (function (exports) {
       }
       return this._sessionId;
     }
-    setupUnloadListener() {
-      if (typeof window !== "undefined") {
-        const flushHandler = () => {
-          this.flush().catch(() => {
-          });
-        };
-        window.addEventListener("beforeunload", flushHandler);
-        window.addEventListener("pagehide", flushHandler);
+    /**
+     * Initialize the service, loads storage queue, runs interval flusher
+     */
+    initializeService() {
+      try {
+        if (typeof localStorage !== "undefined") {
+          const stored = localStorage.getItem(this.STORAGE_KEY);
+          if (stored) {
+            this._inMemoryQueue = JSON.parse(stored);
+            console.debug(`[DAP Telemetry] Loaded ${this._inMemoryQueue.length} events from storage.`);
+          }
+        }
+      } catch (e) {
+        console.warn("[DAP Telemetry] Failed to load queue from storage:", e);
+        this._inMemoryQueue = [];
       }
+      this.initializeSession();
+      this.startInterval();
+      if (typeof window !== "undefined") {
+        const unloadHandler = () => {
+          this.flushSync();
+        };
+        window.addEventListener("beforeunload", unloadHandler);
+        window.addEventListener("pagehide", unloadHandler);
+      }
+      this._isInitialized = true;
+      if (this._pendingEvents.length > 0) {
+        console.debug(`[DAP Telemetry] Draining ${this._pendingEvents.length} pending events...`);
+        this._pendingEvents.forEach((e) => {
+          this.track(e.eventName, e.payload);
+        });
+        this._pendingEvents = [];
+      }
+      this.flush().catch((err) => console.error("[DAP Telemetry] Failed to flush telemetry on startup:", err));
     }
     /**
-     * Queue a player telemetry event matching the structured JSON format
+     * Tracks a telemetry event.
+     * @param eventName Name of the event (e.g. 'feature.used')
+     * @param payload Custom properties of the event
      */
-    async trackPlayerEvent(eventName, flowId, options) {
+    track(eventName, payload = {}) {
+      if (!this._isInitialized) {
+        this._pendingEvents.push({ eventName, payload });
+        return;
+      }
+      const timestamp = Date.now();
+      const occurredAtUtc = new Date(timestamp).toISOString();
+      const sanitizedEventName = eventName.toLowerCase().replace(/[^a-z0-9_]/g, "_");
+      const ulid = generateUlid();
+      const eventId = `evt_player_${sanitizedEventName}_${ulid}`;
       const config = this._config || window.__DAP_CONFIG__;
-      if (!config) {
-        console.debug("[DAP Telemetry] Config not loaded yet, event deferred");
-        return;
+      const orgId = config?.organizationid || payload.organizationId || null;
+      let userId = null;
+      try {
+        const analyticsContext = userContextService.getAnalyticsContext();
+        userId = analyticsContext?.userId || payload.userId || null;
+      } catch {
+        userId = payload.userId || null;
       }
-      const { organizationid, siteid, apiurl } = config;
-      if (!organizationid || !siteid || !apiurl) {
-        return;
+      if (userId && !userId.startsWith("usr_runtime_")) {
+        userId = `usr_runtime_${userId}`;
       }
-      const analyticsContext = userContextService.getAnalyticsContext();
-      const userId = analyticsContext.userId;
-      const cleanEventName = eventName.replace(".", "_");
-      const eventId = `evt_player_${cleanEventName}_${generateUlid()}`;
-      const featureKey = options?.isSurvey ? "survey_insights" : "runtime_guidance";
-      const telemetryEvent = {
+      const siteCollectionId = config?.siteid || payload.siteCollectionId || null;
+      const rawDimensions = {
+        billingDimension: payload.dimensions?.billingDimension || "FeatureUsage",
+        featureKey: payload.dimensions?.featureKey || payload.featureKey || "",
+        pageUrl: payload.dimensions?.pageUrl || (typeof window !== "undefined" ? window.location.href : ""),
+        host: payload.dimensions?.host || (typeof window !== "undefined" ? window.location.host : ""),
+        browser: getBrowserName(),
+        ...payload.dimensions
+      };
+      const dimensions = {};
+      for (const key of Object.keys(rawDimensions)) {
+        const val = rawDimensions[key];
+        if (val !== null && val !== void 0) {
+          if (Array.isArray(val)) {
+            dimensions[key] = val.join(", ");
+          } else if (typeof val === "object") {
+            dimensions[key] = JSON.stringify(val);
+          } else {
+            dimensions[key] = String(val);
+          }
+        }
+      }
+      const event = {
         eventId,
         moduleKey: "player",
         eventName,
-        featureKey,
+        featureKey: payload.featureKey || dimensions.featureKey || "runtime_guidance",
         sessionId: this.getSessionId(),
-        userId: userId.startsWith("usr_runtime_") ? userId : `usr_runtime_${userId}`,
-        siteCollectionId: siteid,
-        quantity: 1,
-        unit: "count",
-        occurredAtUtc: (/* @__PURE__ */ new Date()).toISOString(),
-        classification: "Billable",
+        userId,
+        siteCollectionId,
+        quantity: typeof payload.quantity === "number" ? payload.quantity : 1,
+        unit: payload.unit || "count",
+        occurredAtUtc,
+        classification: (() => {
+          const rawClass = payload.classification || "Billable";
+          if (typeof rawClass === "number") return rawClass;
+          const lower = String(rawClass).toLowerCase();
+          if (lower === "nonbillable" || lower === "non_billable" || lower === "non-billable") return 1;
+          if (lower === "enforcement") return 2;
+          return 0;
+        })(),
+        dimensions
+      };
+      const queueRecord = {
+        id: eventId,
+        orgId,
+        event,
+        retryCount: 0,
+        queuedAt: timestamp
+      };
+      this._inMemoryQueue.push(queueRecord);
+      this.saveQueue(this._inMemoryQueue);
+      if (config?.debug || window.__DAP_DEBUG__) {
+        console.debug(`[DAP Telemetry] Queued event: ${eventName}`, event);
+      }
+      this.flush().catch((err) => {
+        console.warn("[DAP Telemetry] Flush failed in track:", err);
+      });
+    }
+    /**
+     * Send a player telemetry event (retains backward compatibility)
+     */
+    async trackPlayerEvent(eventName, flowId, options) {
+      const featureKey = options?.isSurvey ? "survey_insights" : "runtime_guidance";
+      this.track(eventName, {
+        featureKey,
         dimensions: {
           billingDimension: "EventsIngested",
           flowId,
           pageUrl: typeof window !== "undefined" ? window.location.href : "",
           referrer: typeof document !== "undefined" ? document.referrer : "",
           host: typeof window !== "undefined" ? window.location.host : "",
-          browser: getBrowserName(),
           ...options?.stepId ? { stepId: options.stepId } : {}
         }
-      };
-      this._queue.push(telemetryEvent);
-      console.debug(`[DAP Telemetry] Queued event "${eventName}". Queue length: ${this._queue.length}`);
-      this.startFlushTimer();
-    }
-    startFlushTimer() {
-      if (this._flushTimer) return;
-      this._flushTimer = setInterval(() => {
-        this.flush().catch((err) => {
-          console.warn("[DAP Telemetry] Error during periodic flush:", err);
-        });
-      }, 6e4);
+      });
     }
     /**
-     * Flush the current queue by sending batches to the server
+     * Flush the current queue by sending batches to the server.
      */
     async flush() {
-      if (this._queue.length === 0) return;
-      const config = this._config || window.__DAP_CONFIG__;
-      if (!config) return;
-      const { organizationid, siteid, apiurl } = config;
-      if (!organizationid || !siteid || !apiurl) return;
-      const batch = [...this._queue];
-      this._queue = [];
-      const requestId = `req_player_${generateUlid()}`;
-      const payload = {
-        requestId,
-        events: batch
-      };
-      const base = getBaseUrl(apiurl);
-      const url = `${base}/telemetry/organizations/${organizationid}/site-collections/${siteid}/events`;
-      console.debug(`[DAP Telemetry] Flushing batch of ${batch.length} events to ${url}`, payload);
-      try {
-        await http(config, url, {
-          method: "POST",
-          body: payload,
-          hostBase: typeof window !== "undefined" ? window.location.origin : "",
-          includeHostHeader: true,
-          keepalive: true
-        });
-        console.debug(`[DAP Telemetry] Batch of ${batch.length} events sent successfully`);
-      } catch (err) {
-        console.warn(`[DAP Telemetry] Failed to send player telemetry batch:`, err);
-        this._queue.unshift(...batch);
+      if (!this._isInitialized) return;
+      if (this._isFlushing) {
+        return;
       }
+      if (this._inMemoryQueue.length === 0) {
+        return;
+      }
+      this._isFlushing = true;
+      const config = this._config || window.__DAP_CONFIG__;
+      if (config?.debug || window.__DAP_DEBUG__) {
+        console.debug(`[DAP Telemetry] Flushing ${this._inMemoryQueue.length} events...`);
+      }
+      const groups = {};
+      const unresolvableRecords = [];
+      for (const record of this._inMemoryQueue) {
+        let orgId = record.orgId;
+        if (!orgId && config?.organizationid) {
+          orgId = config.organizationid;
+          record.orgId = orgId;
+        }
+        if (!orgId) {
+          unresolvableRecords.push(record);
+          continue;
+        }
+        if (!record.event.userId) {
+          try {
+            const analyticsContext = userContextService.getAnalyticsContext();
+            let uId = analyticsContext?.userId || null;
+            if (uId) {
+              if (!uId.startsWith("usr_runtime_")) {
+                uId = `usr_runtime_${uId}`;
+              }
+              record.event.userId = uId;
+            }
+          } catch {
+          }
+        }
+        if (!record.event.siteCollectionId && config?.siteid) {
+          record.event.siteCollectionId = config.siteid;
+        }
+        if (!groups[orgId]) {
+          groups[orgId] = [];
+        }
+        groups[orgId].push(record);
+      }
+      const remainingQueue = [...unresolvableRecords];
+      const sendPromises = Object.entries(groups).map(async ([orgId, records]) => {
+        const requestId = `req_player_${generateUlid()}`;
+        const payload = {
+          requestId,
+          events: records.map((r) => r.event)
+        };
+        const base = (config?.apiurl || "").replace(/\/$/, "");
+        const url = `${base}/api/v1/telemetry/organizations/${encodeURIComponent(orgId)}/events`;
+        try {
+          if (config?.debug || window.__DAP_DEBUG__) {
+            console.debug(`[DAP Telemetry] POST to ${url} for requestId: ${requestId}`, payload);
+          }
+          await http(config, url, {
+            method: "POST",
+            body: payload
+          });
+          if (config?.debug || window.__DAP_DEBUG__) {
+            console.debug(`[DAP Telemetry] Batch ${requestId} sent successfully.`);
+          }
+        } catch (err) {
+          console.warn(`[DAP Telemetry] Batch ${requestId} failed:`, err);
+          this.requeueRecords(records, remainingQueue);
+        }
+      });
+      await Promise.all(sendPromises);
+      remainingQueue.sort((a, b) => a.queuedAt - b.queuedAt);
+      this.saveQueue(remainingQueue);
+      this._isFlushing = false;
+    }
+    /**
+     * Synchronous-fallback flush for beforeunload / pagehide events
+     */
+    flushSync() {
+      if (this._inMemoryQueue.length === 0 || !this._config) return;
+      const config = this._config;
+      const groups = {};
+      for (const record of this._inMemoryQueue) {
+        const orgId = record.orgId || config.organizationid;
+        if (orgId) {
+          if (!groups[orgId]) {
+            groups[orgId] = [];
+          }
+          groups[orgId].push(record);
+        }
+      }
+      for (const [orgId, records] of Object.entries(groups)) {
+        const requestId = `req_player_${generateUlid()}`;
+        const payload = {
+          requestId,
+          events: records.map((r) => r.event)
+        };
+        const base = (config.apiurl || "").replace(/\/$/, "");
+        const url = `${base}/api/v1/telemetry/organizations/${encodeURIComponent(orgId)}/events`;
+        try {
+          const bodyStr = JSON.stringify(payload);
+          if (typeof navigator !== "undefined" && navigator.sendBeacon) {
+            const blob = new Blob([bodyStr], { type: "application/json" });
+            navigator.sendBeacon(url, blob);
+          } else if (typeof fetch !== "undefined") {
+            fetch(url, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-Api-Key": config.apikey || ""
+              },
+              body: bodyStr,
+              keepalive: true,
+              credentials: "omit",
+              cache: "no-cache"
+            });
+          }
+        } catch {
+        }
+      }
+      this._inMemoryQueue = [];
+      try {
+        if (typeof localStorage !== "undefined") {
+          localStorage.removeItem(this.STORAGE_KEY);
+        }
+      } catch {
+      }
+    }
+    /**
+     * Requeue failed records, dropping after 10 retries
+     */
+    requeueRecords(records, targetQueue) {
+      records.forEach((r) => {
+        r.retryCount += 1;
+        if (r.retryCount < 10) {
+          targetQueue.push(r);
+        } else {
+          console.warn(`[DAP Telemetry] Dropping event ${r.id} after exceeding max retries.`);
+        }
+      });
+    }
+    /**
+     * Persist event queue to local storage
+     */
+    saveQueue(queue) {
+      this._inMemoryQueue = queue;
+      try {
+        if (typeof localStorage !== "undefined") {
+          localStorage.setItem(this.STORAGE_KEY, JSON.stringify(queue));
+        }
+      } catch {
+      }
+    }
+    startInterval() {
+      this.stopInterval();
+      this._intervalId = setInterval(() => {
+        this.flush().catch((err) => {
+          console.warn("[DAP Telemetry] Periodic flush failed:", err);
+        });
+      }, this.BATCH_INTERVAL_MS);
+    }
+    stopInterval() {
+      if (this._intervalId) {
+        clearInterval(this._intervalId);
+        this._intervalId = null;
+      }
+    }
+    /**
+     * Triggers clean shutdown of the SDK flush timers.
+     */
+    shutdown() {
+      this.stopInterval();
+      this.flushSync();
+      this._isInitialized = false;
     }
   };
   _TelemetryService._instance = null;
@@ -12877,13 +13090,6 @@ var DAP = (function (exports) {
   }
 
   // src/services/licensingService.ts
-  function getBaseUrl2(apiurl) {
-    let base = apiurl.replace(/\/$/, "");
-    if (!base.endsWith("/v1") && !base.includes("/v1/")) {
-      base = `${base}/v1`;
-    }
-    return base;
-  }
   var _LicensingService = class _LicensingService {
     constructor() {
       this._config = null;
@@ -12904,45 +13110,18 @@ var DAP = (function (exports) {
      */
     async init(config) {
       this._config = config;
-      const { organizationid, apiurl, siteid } = config;
+      const { organizationid, apiurl } = config;
       if (!organizationid || !apiurl) {
         console.warn("[DAP Licensing] Missing config for licensing, entering fallback (fail-open) mode");
         this._fallbackMode = true;
         return;
       }
-      const base = getBaseUrl2(apiurl);
-      const entitlementsUrl = `${base}/organizations/${organizationid}/licensing/entitlements`;
-      const siteEntitlementsUrl = `${base}/organizations/${organizationid}/site-collections/${siteid}/licensing/entitlements`;
-      console.debug(`[DAP Licensing] Fetching entitlements. Org URL: ${entitlementsUrl}, Site URL: ${siteEntitlementsUrl}`);
+      const entitlementsUrl = `${apiurl.replace(/\/$/, "")}/api/v1/organizations/${organizationid}/licensing/entitlements`;
+      console.debug(`[DAP Licensing] Fetching entitlements from: ${entitlementsUrl}`);
       try {
-        const headers = {
-          "Accept": "application/json",
-          "X-Site-Collection-Id": siteid || "",
-          "X-Site-Id": siteid || "",
-          "X-SiteCollection-Id": siteid || ""
-        };
-        let response;
-        try {
-          console.debug(`[DAP Licensing] Attempting primary entitlements fetch from org endpoint`);
-          response = await http(config, entitlementsUrl, {
-            method: "GET",
-            headers,
-            hostBase: typeof window !== "undefined" ? window.location.origin : "",
-            includeHostHeader: true
-          });
-        } catch (err) {
-          if (err?.status === 401 || err?.status === 403 || err?.status === 404) {
-            console.debug(`[DAP Licensing] Org endpoint returned ${err?.status || "error"}. Retrying with site-collection scoped entitlements endpoint.`);
-            response = await http(config, siteEntitlementsUrl, {
-              method: "GET",
-              headers,
-              hostBase: typeof window !== "undefined" ? window.location.origin : "",
-              includeHostHeader: true
-            });
-          } else {
-            throw err;
-          }
-        }
+        const response = await http(config, entitlementsUrl, {
+          method: "GET"
+        });
         if (response) {
           this.parseEntitlements(response);
           this._isLoaded = true;
@@ -13047,39 +13226,11 @@ var DAP = (function (exports) {
      */
     async getEnforcementEvents() {
       if (!this._config) return [];
-      const { organizationid, apiurl, siteid } = this._config;
+      const { organizationid, apiurl } = this._config;
       if (!organizationid || !apiurl) return [];
-      const base = getBaseUrl2(apiurl);
-      const url = `${base}/organizations/${organizationid}/licensing/enforcement-events`;
-      const siteUrl = `${base}/organizations/${organizationid}/site-collections/${siteid}/licensing/enforcement-events`;
+      const url = `${apiurl.replace(/\/$/, "")}/api/v1/organizations/${organizationid}/licensing/enforcement-events`;
       try {
-        const headers = {
-          "Accept": "application/json",
-          "X-Site-Collection-Id": siteid || "",
-          "X-Site-Id": siteid || "",
-          "X-SiteCollection-Id": siteid || ""
-        };
-        let response;
-        try {
-          response = await http(this._config, url, {
-            method: "GET",
-            headers,
-            hostBase: typeof window !== "undefined" ? window.location.origin : "",
-            includeHostHeader: true
-          });
-        } catch (err) {
-          if (err?.status === 401 || err?.status === 403 || err?.status === 404) {
-            console.debug(`[DAP Licensing] Enforcement-events primary endpoint returned ${err?.status || "error"}. Retrying with site-collection scoped endpoint.`);
-            response = await http(this._config, siteUrl, {
-              method: "GET",
-              headers,
-              hostBase: typeof window !== "undefined" ? window.location.origin : "",
-              includeHostHeader: true
-            });
-          } else {
-            throw err;
-          }
-        }
+        const response = await http(this._config, url, { method: "GET" });
         return Array.isArray(response) ? response : response?.events || [];
       } catch (err) {
         console.warn("[DAP Licensing] Failed to query enforcement events:", err);
@@ -14863,6 +15014,19 @@ var DAP = (function (exports) {
             }
           })
         );
+      }
+      try {
+        telemetryService.track("licensing.enforcement", {
+          featureKey: targetKey,
+          classification: "Enforcement",
+          dimensions: {
+            eventType,
+            target: targetKey,
+            message
+          }
+        });
+      } catch (err) {
+        console.warn("[DAP] Failed to track licensing violation telemetry event:", err);
       }
     }
     /**
