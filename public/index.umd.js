@@ -107,7 +107,7 @@ var DAP = (function (exports) {
   async function http(cfg, path, opts = {}) {
     const method = (opts.method || "GET").toUpperCase();
     const headers = {
-      ...opts.useUppercaseApiKey ? { "X-API-Key": cfg.apikey } : { "X-Api-Key": cfg.apikey },
+      "X-Api-Key": cfg.apikey,
       "X-Organization-Id": cfg.organizationid,
       "X-Site-Id": cfg.siteid,
       ...opts.includeHostHeader && opts.hostBase ? { "X-Host-Url": opts.hostBase } : {},
@@ -511,8 +511,7 @@ var DAP = (function (exports) {
           hostname: hostBase,
           page: page ?? null,
           userId: userContextService.getAnalyticsContext().userId
-        },
-        useUppercaseApiKey: true
+        }
       });
       if (!Array.isArray(res)) return [];
       return res.map((item) => typeof item === "string" ? item : item.flowId || item.id || String(item));
@@ -522,8 +521,7 @@ var DAP = (function (exports) {
         const res = await http(cfg, url, {
           method: "GET",
           hostBase,
-          includeHostHeader: true,
-          useUppercaseApiKey: true
+          includeHostHeader: true
         });
         if (!Array.isArray(res?.flowIds)) return [];
         return res.flowIds.map((item) => typeof item === "string" ? item : item.flowId || item.id || String(item));
@@ -544,8 +542,7 @@ var DAP = (function (exports) {
       const flowData = await http(cfg, url, {
         method: "GET",
         hostBase,
-        includeHostHeader: true,
-        useUppercaseApiKey: true
+        includeHostHeader: true
       });
       console.debug(`[DAP] Successfully fetched flow ${flowId} from current site, caching it`);
       flowCache.set(flowId, flowData);
@@ -579,8 +576,7 @@ var DAP = (function (exports) {
       const res = await http(cfg, url, {
         method: "GET",
         hostBase,
-        includeHostHeader: true,
-        useUppercaseApiKey: true
+        includeHostHeader: true
       });
       return res?.allowed === true;
     } catch (e) {
@@ -13174,8 +13170,7 @@ var DAP = (function (exports) {
           method: "GET",
           headers,
           hostBase: typeof window !== "undefined" ? window.location.origin : "",
-          includeHostHeader: true,
-          useUppercaseApiKey: true
+          includeHostHeader: true
         });
         if (response) {
           this.parseEntitlements(response);
@@ -13295,8 +13290,7 @@ var DAP = (function (exports) {
           method: "GET",
           headers,
           hostBase: typeof window !== "undefined" ? window.location.origin : "",
-          includeHostHeader: true,
-          useUppercaseApiKey: true
+          includeHostHeader: true
         });
         return Array.isArray(response) ? response : response?.events || [];
       } catch (err) {
