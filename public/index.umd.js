@@ -109,7 +109,7 @@ var DAP = (function (exports) {
     const headers = {
       "X-Api-Key": cfg.apikey,
       "X-API-Key": cfg.apikey,
-      ...opts.includeHostHeader && opts.hostBase ? { "X-Host-Url": opts.hostBase.replace(/^https?:\/\//i, "").split("/")[0] } : {},
+      ...opts.includeHostHeader && opts.hostBase ? { "X-Host-Url": opts.hostBase } : {},
       ...opts.headers || {}
     };
     let bodyInit;
@@ -12626,8 +12626,8 @@ var DAP = (function (exports) {
         console.debug("[DAP Telemetry] Config not loaded yet, event deferred");
         return;
       }
-      const { organizationid, siteid: siteid2, apiurl } = config;
-      if (!organizationid || !siteid2 || !apiurl) {
+      const { organizationid, siteid, apiurl } = config;
+      if (!organizationid || !siteid || !apiurl) {
         return;
       }
       const analyticsContext = userContextService.getAnalyticsContext();
@@ -12642,7 +12642,7 @@ var DAP = (function (exports) {
         featureKey,
         sessionId: this.getSessionId(),
         userId: userId.startsWith("usr_runtime_") ? userId : `usr_runtime_${userId}`,
-        siteCollectionId: siteid2,
+        siteCollectionId: siteid,
         quantity: 1,
         unit: "count",
         occurredAtUtc: (/* @__PURE__ */ new Date()).toISOString(),
@@ -12676,8 +12676,8 @@ var DAP = (function (exports) {
       if (this._queue.length === 0) return;
       const config = this._config || window.__DAP_CONFIG__;
       if (!config) return;
-      const { organizationid, siteid: siteid2, apiurl } = config;
-      if (!organizationid || !siteid2 || !apiurl) return;
+      const { organizationid, siteid, apiurl } = config;
+      if (!organizationid || !siteid || !apiurl) return;
       const batch = [...this._queue];
       this._queue = [];
       const requestId = `req_player_${generateUlid()}`;
@@ -12686,13 +12686,13 @@ var DAP = (function (exports) {
         events: batch
       };
       const base = getBaseUrl(apiurl);
-      const url = `${base}/telemetry/organizations/${organizationid}/site-collections/${siteid2}/events`;
+      const url = `${base}/telemetry/organizations/${organizationid}/site-collections/${siteid}/events`;
       console.debug(`[DAP Telemetry] Flushing batch of ${batch.length} events to ${url}`, payload);
       try {
         await http(config, url, {
           method: "POST",
           body: payload,
-          hostBase: typeof window !== "undefined" ? window.location.hostname : "",
+          hostBase: typeof window !== "undefined" ? window.location.origin : "",
           includeHostHeader: true,
           keepalive: true
         });
@@ -12860,17 +12860,17 @@ var DAP = (function (exports) {
     }
   }
   function buildTrackingApiUrl(config) {
-    const { organizationid, siteid: siteid2, apiurl } = config;
-    if (!organizationid || !siteid2 || !apiurl) {
+    const { organizationid, siteid, apiurl } = config;
+    if (!organizationid || !siteid || !apiurl) {
       console.error("[DAP Tracking] Missing required config fields for API URL:", {
         hasOrganizationId: !!organizationid,
-        hasSiteId: !!siteid2,
+        hasSiteId: !!siteid,
         hasApiUrl: !!apiurl
       });
       return null;
     }
     const baseUrl = apiurl.replace(/\/$/, "");
-    return `${baseUrl}/analytics/organizationId/${organizationid}/siteCollectionId/${siteid2}`;
+    return `${baseUrl}/analytics/organizationId/${organizationid}/siteCollectionId/${siteid}`;
   }
   function resetFlowTracking(flowId) {
     trackingState.reset(flowId);
@@ -12904,7 +12904,7 @@ var DAP = (function (exports) {
      */
     async init(config) {
       this._config = config;
-      const { organizationid, apiurl } = config;
+      const { organizationid, apiurl, siteid } = config;
       if (!organizationid || !apiurl) {
         console.warn("[DAP Licensing] Missing config for licensing, entering fallback (fail-open) mode");
         this._fallbackMode = true;
@@ -12927,7 +12927,7 @@ var DAP = (function (exports) {
           response = await http(config, entitlementsUrl, {
             method: "GET",
             headers,
-            hostBase: typeof window !== "undefined" ? window.location.hostname : "",
+            hostBase: typeof window !== "undefined" ? window.location.origin : "",
             includeHostHeader: true
           });
         } catch (err) {
@@ -12936,7 +12936,7 @@ var DAP = (function (exports) {
             response = await http(config, siteEntitlementsUrl, {
               method: "GET",
               headers,
-              hostBase: typeof window !== "undefined" ? window.location.hostname : "",
+              hostBase: typeof window !== "undefined" ? window.location.origin : "",
               includeHostHeader: true
             });
           } else {
@@ -13047,24 +13047,24 @@ var DAP = (function (exports) {
      */
     async getEnforcementEvents() {
       if (!this._config) return [];
-      const { organizationid, apiurl, siteid: siteid2 } = this._config;
+      const { organizationid, apiurl, siteid } = this._config;
       if (!organizationid || !apiurl) return [];
       const base = getBaseUrl2(apiurl);
       const url = `${base}/organizations/${organizationid}/licensing/enforcement-events`;
-      const siteUrl = `${base}/organizations/${organizationid}/site-collections/${siteid2}/licensing/enforcement-events`;
+      const siteUrl = `${base}/organizations/${organizationid}/site-collections/${siteid}/licensing/enforcement-events`;
       try {
         const headers = {
           "Accept": "application/json",
-          "X-Site-Collection-Id": siteid2 || "",
-          "X-Site-Id": siteid2 || "",
-          "X-SiteCollection-Id": siteid2 || ""
+          "X-Site-Collection-Id": siteid || "",
+          "X-Site-Id": siteid || "",
+          "X-SiteCollection-Id": siteid || ""
         };
         let response;
         try {
           response = await http(this._config, url, {
             method: "GET",
             headers,
-            hostBase: typeof window !== "undefined" ? window.location.hostname : "",
+            hostBase: typeof window !== "undefined" ? window.location.origin : "",
             includeHostHeader: true
           });
         } catch (err) {
@@ -13073,7 +13073,7 @@ var DAP = (function (exports) {
             response = await http(this._config, siteUrl, {
               method: "GET",
               headers,
-              hostBase: typeof window !== "undefined" ? window.location.hostname : "",
+              hostBase: typeof window !== "undefined" ? window.location.origin : "",
               includeHostHeader: true
             });
           } else {
