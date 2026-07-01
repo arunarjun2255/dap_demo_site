@@ -5,4 +5,12 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   base: process.env.VITE_BASE_PATH || "/dap_demo_site",
+  server: {
+    proxy: {
+      '/api': {
+        target: 'https://cogniorbackend-v1.azurewebsites.net',
+        changeOrigin: true,
+      },
+    },
+  },
 });
