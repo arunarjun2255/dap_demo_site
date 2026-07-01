@@ -12505,6 +12505,151 @@ var DAP = (function (exports) {
   };
   LocationContextService.getInstance();
 
+  // src/services/telemetryService.ts
+  function generateUlid() {
+    const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+    let now = Date.now();
+    let timeStr = "";
+    for (let i = 0; i < 10; i++) {
+      const mod = now % 32;
+      timeStr = alphabet[mod] + timeStr;
+      now = Math.floor(now / 32);
+    }
+    let randStr = "";
+    for (let i = 0; i < 16; i++) {
+      const rand = Math.floor(Math.random() * 32);
+      randStr += alphabet[rand];
+    }
+    return timeStr + randStr;
+  }
+  function generateUuid() {
+    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+      const r = Math.random() * 16 | 0;
+      const v = c === "x" ? r : r & 3 | 8;
+      return v.toString(16);
+    });
+  }
+  function getBrowserName() {
+    if (typeof navigator === "undefined") return "Unknown";
+    const ua = navigator.userAgent;
+    if (ua.indexOf("Chrome") > -1) {
+      if (ua.indexOf("Edg") > -1) return "Edge";
+      return "Chrome";
+    }
+    if (ua.indexOf("Safari") > -1) return "Safari";
+    if (ua.indexOf("Firefox") > -1) return "Firefox";
+    if (ua.indexOf("MSIE") > -1 || ua.indexOf("Trident") > -1) return "IE";
+    return "Unknown";
+  }
+  var _TelemetryService = class _TelemetryService {
+    constructor() {
+      this._config = null;
+      this._sessionId = null;
+      this.SESSION_ID_KEY = "dap_player_session_id";
+      this.initializeSession();
+    }
+    static getInstance() {
+      if (!this._instance) {
+        this._instance = new _TelemetryService();
+      }
+      return this._instance;
+    }
+    /**
+     * Set configuration
+     */
+    setConfig(config) {
+      this._config = config;
+    }
+    /**
+     * Initialize or retrieve the session ID
+     */
+    initializeSession() {
+      try {
+        if (typeof sessionStorage !== "undefined") {
+          let stored = sessionStorage.getItem(this.SESSION_ID_KEY);
+          if (!stored) {
+            stored = `sess_runtime_${generateUuid().replace(/-/g, "")}`;
+            sessionStorage.setItem(this.SESSION_ID_KEY, stored);
+          }
+          this._sessionId = stored;
+        } else {
+          this._sessionId = `sess_runtime_${generateUuid().replace(/-/g, "")}`;
+        }
+      } catch {
+        this._sessionId = `sess_runtime_${generateUuid().replace(/-/g, "")}`;
+      }
+    }
+    /**
+     * Get the current session ID
+     */
+    getSessionId() {
+      if (!this._sessionId) {
+        this.initializeSession();
+      }
+      return this._sessionId;
+    }
+    /**
+     * Send a player telemetry event matching the structured JSON format
+     */
+    async trackPlayerEvent(eventName, flowId, options) {
+      const config = this._config || window.__DAP_CONFIG__;
+      if (!config) {
+        console.debug("[DAP Telemetry] Config not loaded yet, event deferred");
+        return;
+      }
+      const { organizationid, siteid, apiurl } = config;
+      if (!organizationid || !siteid || !apiurl) {
+        return;
+      }
+      const analyticsContext = userContextService.getAnalyticsContext();
+      const userId = analyticsContext.userId;
+      const requestId = `req_player_${generateUlid()}`;
+      const cleanEventName = eventName.replace(".", "_");
+      const eventId = `evt_player_${cleanEventName}_${generateUlid()}`;
+      const featureKey = options?.isSurvey ? "survey_insights" : "runtime_guidance";
+      const telemetryEvent = {
+        eventId,
+        moduleKey: "player",
+        eventName,
+        featureKey,
+        sessionId: this.getSessionId(),
+        userId: userId.startsWith("usr_runtime_") ? userId : `usr_runtime_${userId}`,
+        siteCollectionId: siteid,
+        quantity: 1,
+        unit: "count",
+        occurredAtUtc: (/* @__PURE__ */ new Date()).toISOString(),
+        classification: "Billable",
+        dimensions: {
+          billingDimension: "EventsIngested",
+          flowId,
+          pageUrl: typeof window !== "undefined" ? window.location.href : "",
+          referrer: typeof document !== "undefined" ? document.referrer : "",
+          host: typeof window !== "undefined" ? window.location.host : "",
+          browser: getBrowserName(),
+          ...options?.stepId ? { stepId: options.stepId } : {}
+        }
+      };
+      const payload = {
+        requestId,
+        events: [telemetryEvent]
+      };
+      const url = `${apiurl.replace(/\/$/, "")}/api/v1/organizations/${organizationid}/telemetry`;
+      console.debug(`[DAP Telemetry] Sending event "${eventName}" to ${url}`, payload);
+      try {
+        await http(config, url, {
+          method: "POST",
+          body: payload
+        });
+        console.debug(`[DAP Telemetry] Event "${eventName}" sent successfully`);
+      } catch (err) {
+        console.warn(`[DAP Telemetry] Failed to send player telemetry:`, err);
+      }
+    }
+  };
+  _TelemetryService._instance = null;
+  var TelemetryService = _TelemetryService;
+  var telemetryService = TelemetryService.getInstance();
+
   // src/utils/privacyManager.ts
   var PRIVACY_PREFS_KEY = "dap_privacy_preferences";
   var DEFAULT_PREFERENCES = {
@@ -12621,6 +12766,12 @@ var DAP = (function (exports) {
       return;
     }
     trackingState.markStepTracked(flowId, stepId);
+    telemetryService.trackPlayerEvent("flow.step_viewed", flowId, {
+      stepId,
+      isSurvey: stepId.startsWith("s") || stepId.toLowerCase().includes("survey")
+    }).catch((err) => {
+      console.warn("[DAP] Failed to send flow.step_viewed telemetry:", err);
+    });
     const payload = {
       flowId,
       stepId,
@@ -12667,6 +12818,171 @@ var DAP = (function (exports) {
   function resetFlowTracking(flowId) {
     trackingState.reset(flowId);
   }
+
+  // src/services/licensingService.ts
+  var _LicensingService = class _LicensingService {
+    constructor() {
+      this._config = null;
+      this._features = {};
+      this._limits = {};
+      this._isLoaded = false;
+      this._fallbackMode = false;
+      this._tierKey = "unknown";
+    }
+    static getInstance() {
+      if (!this._instance) {
+        this._instance = new _LicensingService();
+      }
+      return this._instance;
+    }
+    /**
+     * Initialize the service by fetching entitlements
+     */
+    async init(config) {
+      this._config = config;
+      const { organizationid, apiurl } = config;
+      if (!organizationid || !apiurl) {
+        console.warn("[DAP Licensing] Missing config for licensing, entering fallback (fail-open) mode");
+        this._fallbackMode = true;
+        return;
+      }
+      const entitlementsUrl = `${apiurl.replace(/\/$/, "")}/api/v1/organizations/${organizationid}/licensing/entitlements`;
+      console.debug(`[DAP Licensing] Fetching entitlements from: ${entitlementsUrl}`);
+      try {
+        const response = await http(config, entitlementsUrl, {
+          method: "GET"
+        });
+        if (response) {
+          this.parseEntitlements(response);
+          this._isLoaded = true;
+          this._fallbackMode = false;
+          console.debug(`[DAP Licensing] Entitlements loaded successfully. Tier: ${this._tierKey}`);
+        } else {
+          throw new Error("Empty response from entitlements API");
+        }
+      } catch (err) {
+        console.warn(
+          `[DAP Licensing] Failed to query entitlements. Entering fail-open fallback mode. Error: ${err.message}`
+        );
+        this._fallbackMode = true;
+      }
+    }
+    /**
+     * Parse features and limits from the API response defensively
+     */
+    parseEntitlements(data) {
+      if (!data) return;
+      this._tierKey = data.tierKey || data.tier || "unknown";
+      this._features = {};
+      const rawFeatures = data.features;
+      if (Array.isArray(rawFeatures)) {
+        rawFeatures.forEach((f) => {
+          if (f && typeof f.featureKey === "string") {
+            this._features[f.featureKey] = f.isEnabled !== void 0 ? !!f.isEnabled : true;
+          }
+        });
+      } else if (rawFeatures && typeof rawFeatures === "object") {
+        Object.keys(rawFeatures).forEach((key) => {
+          this._features[key] = !!rawFeatures[key];
+        });
+      }
+      this._limits = {};
+      const rawLimits = data.limits;
+      if (Array.isArray(rawLimits)) {
+        rawLimits.forEach((l) => {
+          if (l && typeof l.limitKey === "string") {
+            this._limits[l.limitKey] = {
+              limitKey: l.limitKey,
+              value: typeof l.value === "number" ? l.value : 0,
+              unit: l.unit || "count",
+              consumed: typeof l.consumed === "number" ? l.consumed : 0,
+              hardLimit: l.hardLimit !== void 0 ? !!l.hardLimit : !!l.hard_limit
+            };
+          }
+        });
+      } else if (rawLimits && typeof rawLimits === "object") {
+        Object.keys(rawLimits).forEach((key) => {
+          const item = rawLimits[key];
+          if (item && typeof item === "object") {
+            this._limits[key] = {
+              limitKey: key,
+              value: typeof item.value === "number" ? item.value : 0,
+              unit: item.unit || "count",
+              consumed: typeof item.consumed === "number" ? item.consumed : 0,
+              hardLimit: item.hardLimit !== void 0 ? !!item.hardLimit : !!item.hard_limit
+            };
+          } else if (typeof item === "number") {
+            this._limits[key] = {
+              limitKey: key,
+              value: item,
+              consumed: 0,
+              hardLimit: false
+            };
+          }
+        });
+      }
+    }
+    /**
+     * Check if a feature is enabled (fail-open by default if fallback mode)
+     */
+    isFeatureEnabled(featureKey) {
+      if (this._fallbackMode) {
+        return true;
+      }
+      return this._features[featureKey] !== void 0 ? this._features[featureKey] : true;
+    }
+    /**
+     * Check if a limit is exceeded (fail-open by default if fallback mode)
+     */
+    isLimitExceeded(limitKey, increment = 0) {
+      if (this._fallbackMode) {
+        return false;
+      }
+      const limit = this._limits[limitKey];
+      if (!limit) {
+        return false;
+      }
+      const currentConsumed = limit.consumed || 0;
+      const value = limit.value;
+      const isHard = !!limit.hardLimit;
+      if (isHard && currentConsumed + increment > value) {
+        console.warn(`[DAP Licensing] Quota exceeded for "${limitKey}". Limit: ${value}, Consumed: ${currentConsumed + increment}`);
+        return true;
+      }
+      return false;
+    }
+    /**
+     * Query licensing enforcement events from the backend
+     */
+    async getEnforcementEvents() {
+      if (!this._config) return [];
+      const { organizationid, apiurl } = this._config;
+      if (!organizationid || !apiurl) return [];
+      const url = `${apiurl.replace(/\/$/, "")}/api/v1/organizations/${organizationid}/licensing/enforcement-events`;
+      try {
+        const response = await http(this._config, url, { method: "GET" });
+        return Array.isArray(response) ? response : response?.events || [];
+      } catch (err) {
+        console.warn("[DAP Licensing] Failed to query enforcement events:", err);
+        return [];
+      }
+    }
+    /**
+     * Get current debugging state
+     */
+    getDebugState() {
+      return {
+        isLoaded: this._isLoaded,
+        fallbackMode: this._fallbackMode,
+        tierKey: this._tierKey,
+        features: { ...this._features },
+        limits: { ...this._limits }
+      };
+    }
+  };
+  _LicensingService._instance = null;
+  var LicensingService = _LicensingService;
+  var licensingService = LicensingService.getInstance();
 
   // src/utils/previewMode.ts
   var PREVIEW_SESSION_STORAGE_KEY = "dap_preview_session_id";
@@ -14382,6 +14698,55 @@ var DAP = (function (exports) {
       return false;
     }
     /**
+     * Validate flow against licensing entitlements and limits
+     */
+    validateFlowLicensing(flowData) {
+      const previewMode = detectPreviewMode();
+      if (previewMode.isPreviewMode) {
+        if (!licensingService.isFeatureEnabled("flow_preview")) {
+          console.error(`[DAP] \u{1F6D1} Licensing Enforcement: EntitlementDenied - Feature "flow_preview" is not enabled.`);
+          this.triggerLicensingViolationEvent("EntitlementDenied", "flow_preview", "Feature 'flow_preview' is not enabled.");
+          return false;
+        }
+        return true;
+      }
+      if (!licensingService.isFeatureEnabled("runtime_guidance")) {
+        console.error(`[DAP] \u{1F6D1} Licensing Enforcement: EntitlementDenied - Feature "runtime_guidance" is not enabled.`);
+        this.triggerLicensingViolationEvent("EntitlementDenied", "runtime_guidance", "Feature 'runtime_guidance' is not enabled.");
+        return false;
+      }
+      const hasSurveyStep = flowData.steps?.some(
+        (step) => {
+          const type = step.uxExperience?.uxExperienceType || step.type || "";
+          return String(type).toLowerCase() === "survey";
+        }
+      );
+      if (hasSurveyStep && !licensingService.isFeatureEnabled("survey_insights")) {
+        console.error(`[DAP] \u{1F6D1} Licensing Enforcement: EntitlementDenied - Feature "survey_insights" is not enabled but flow contains survey steps.`);
+        this.triggerLicensingViolationEvent("EntitlementDenied", "survey_insights", "Feature 'survey_insights' is not enabled.");
+        return false;
+      }
+      if (licensingService.isLimitExceeded("max_flows_per_site")) {
+        console.error(`[DAP] \u{1F6D1} Licensing Enforcement: QuotaExceeded - Limit "max_flows_per_site" is exceeded.`);
+        this.triggerLicensingViolationEvent("QuotaExceeded", "max_flows_per_site", "Limit 'max_flows_per_site' is exceeded.");
+        return false;
+      }
+      return true;
+    }
+    triggerLicensingViolationEvent(eventType, targetKey, message) {
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent("dap_licensing_enforcement", {
+            detail: {
+              eventType,
+              targetKey,
+              message
+            }
+          })
+        );
+      }
+    }
+    /**
      * Start a new flow
      */
     async startFlow(flowData) {
@@ -14420,6 +14785,11 @@ var DAP = (function (exports) {
       if (!this.validateFlowFrequency(flowData)) {
         console.debug(`[DAP] \u{1F6D1} Flow ${flowData.flowId} blocked by frequency validation`);
         this._onFlowEnd?.(flowData.flowId, "frequency_blocked");
+        return;
+      }
+      if (!this.validateFlowLicensing(flowData)) {
+        console.warn(`[DAP] \u{1F6D1} Flow ${flowData.flowId} blocked by licensing validation`);
+        this._onFlowEnd?.(flowData.flowId, "licensing_blocked");
         return;
       }
       this.analyzeTriggerUsage(flowData);
@@ -14498,6 +14868,9 @@ var DAP = (function (exports) {
         isFlowRunning: true,
         activeStepIndex: this._state.activeStep
       });
+      telemetryService.trackPlayerEvent("flow.launched", flowData.flowId).catch((err) => {
+        console.warn("[DAP] Failed to send flow.launched telemetry:", err);
+      });
       this.executeStep();
     }
     /**
@@ -14506,7 +14879,13 @@ var DAP = (function (exports) {
      */
     abortFlow() {
       if (!this._state.flowInProgress) return;
-      console.debug(`[DAP] Aborting flow: ${this._state.activeFlowId}`);
+      const flowId = this._state.activeFlowId;
+      console.debug(`[DAP] Aborting flow: ${flowId}`);
+      if (flowId) {
+        telemetryService.trackPlayerEvent("flow.exited", flowId).catch((err) => {
+          console.warn("[DAP] Failed to send flow.exited telemetry:", err);
+        });
+      }
       if (this._currentFlow) {
         this._currentFlow.steps.forEach((step) => {
           this.removeStepVisualUX(step);
@@ -14520,14 +14899,14 @@ var DAP = (function (exports) {
           console.error(`[DAP] Error clearing session during abort:`, e);
         }
         try {
-          const flowId = this._state.activeFlowId;
+          const flowId2 = this._state.activeFlowId;
           const activeStr = sessionStorage.getItem("dap_active_flows");
           if (activeStr) {
             const active = JSON.parse(activeStr);
             if (Array.isArray(active)) {
-              const updated = active.filter((id) => id !== flowId);
+              const updated = active.filter((id) => id !== flowId2);
               sessionStorage.setItem("dap_active_flows", JSON.stringify(updated));
-              console.debug(`[DAP] [Cross-Site] Removed aborted flow ${flowId} from active flows list`);
+              console.debug(`[DAP] [Cross-Site] Removed aborted flow ${flowId2} from active flows list`);
             }
           }
         } catch (e) {
@@ -16797,6 +17176,11 @@ var DAP = (function (exports) {
       const flowData = this._currentFlow;
       const flowId = this._state.activeFlowId;
       console.debug(`[DAP] \u2705 FLOW COMPLETED: ${flowId}`);
+      if (flowId) {
+        telemetryService.trackPlayerEvent("flow.completed", flowId).catch((err) => {
+          console.warn("[DAP] Failed to send flow.completed telemetry:", err);
+        });
+      }
       console.debug(`[DAP] \u{1F4CA} Completed ${this._state.triggeredSteps.size} steps out of ${flowData?.steps.length || 0} total steps`);
       if (flowId) {
         this.clearFlowProgress(flowId);
@@ -18596,560 +18980,6 @@ var DAP = (function (exports) {
     run();
   }
 
-  // src/sdk/types.ts
-  function generateUUID() {
-    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-      return crypto.randomUUID();
-    }
-    if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
-      const buffer = new Uint8Array(16);
-      crypto.getRandomValues(buffer);
-      buffer[6] = buffer[6] & 15 | 64;
-      buffer[8] = buffer[8] & 63 | 128;
-      const hex = [];
-      for (let i = 0; i < 16; i++) {
-        hex.push(buffer[i].toString(16).padStart(2, "0"));
-      }
-      return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex.slice(6, 8).join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10, 16).join("")}`;
-    }
-    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-      const r = Math.random() * 16 | 0;
-      const v = c === "x" ? r : r & 3 | 8;
-      return v.toString(16);
-    });
-  }
-  function getOrCreateSessionId(moduleKey) {
-    const key = `dap_sdk_session_${moduleKey}`;
-    try {
-      if (typeof window !== "undefined" && window.sessionStorage) {
-        let sessionId = window.sessionStorage.getItem(key);
-        if (!sessionId) {
-          sessionId = `sess_${generateUUID().replace(/-/g, "")}`;
-          window.sessionStorage.setItem(key, sessionId);
-        }
-        return sessionId;
-      }
-    } catch {
-    }
-    const globalObj = typeof globalThis !== "undefined" ? globalThis : typeof window !== "undefined" ? window : {};
-    if (!globalObj[key]) {
-      globalObj[key] = `sess_${generateUUID().replace(/-/g, "")}`;
-    }
-    return globalObj[key];
-  }
-  function getFormattedDate() {
-    const now = /* @__PURE__ */ new Date();
-    const YYYY = now.getUTCFullYear();
-    const MM = String(now.getUTCMonth() + 1).padStart(2, "0");
-    const DD = String(now.getUTCDate()).padStart(2, "0");
-    return `${YYYY}${MM}${DD}`;
-  }
-  function generateRequestId(moduleKey) {
-    const dateStr = getFormattedDate();
-    const unique = generateUUID().replace(/-/g, "").substring(0, 25).toUpperCase();
-    return `req_${moduleKey}_${dateStr}_${unique}`;
-  }
-  function generateEventId(moduleKey, eventName) {
-    const cleanEventName = eventName.replace(/\./g, "_").toLowerCase();
-    const unique = generateUUID().replace(/-/g, "").substring(0, 25).toUpperCase();
-    return `evt_${moduleKey}_${cleanEventName}_${unique}`;
-  }
-  async function retryWithBackoff(operation, maxRetries = 3, initialDelayMs = 1e3, backoffFactor = 2) {
-    let retries = 0;
-    while (true) {
-      try {
-        return await operation();
-      } catch (error) {
-        retries++;
-        if (retries > maxRetries) {
-          throw error;
-        }
-        const delay = initialDelayMs * Math.pow(backoffFactor, retries - 1);
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      }
-    }
-  }
-  function validateConfig2(config) {
-    if (!config) {
-      throw new Error("SDK Configuration is required");
-    }
-    if (!config.apiBaseUrl) {
-      throw new Error("SDKConfig.apiBaseUrl is required");
-    }
-    try {
-      new URL(config.apiBaseUrl);
-    } catch {
-      throw new Error(`SDKConfig.apiBaseUrl "${config.apiBaseUrl}" is not a valid URL`);
-    }
-    if (!config.apiKey || typeof config.apiKey !== "string" || config.apiKey.trim() === "") {
-      throw new Error("SDKConfig.apiKey is required and must be a non-empty string");
-    }
-    if (!config.organizationId || typeof config.organizationId !== "string" || config.organizationId.trim() === "") {
-      throw new Error("SDKConfig.organizationId is required and must be a non-empty string");
-    }
-    if (!config.siteCollectionId || typeof config.siteCollectionId !== "string" || config.siteCollectionId.trim() === "") {
-      throw new Error("SDKConfig.siteCollectionId is required and must be a non-empty string");
-    }
-    if (!config.moduleKey || typeof config.moduleKey !== "string" || config.moduleKey.trim() === "") {
-      throw new Error("SDKConfig.moduleKey is required and must be a non-empty string");
-    }
-  }
-
-  // src/sdk/TelemetrySDK.ts
-  var TelemetrySDK = class {
-    constructor() {
-      this.queue = [];
-      this.isInitialized = false;
-    }
-    /**
-     * Initializes the Telemetry SDK with the common configuration.
-     *
-     * @param config - The SDK configuration.
-     */
-    async initialize(config) {
-      validateConfig2(config);
-      this.config = config;
-      this.sessionId = getOrCreateSessionId(config.moduleKey);
-      if (config.enableTelemetry !== false) {
-        this.startFlushTimer();
-      }
-      this.isInitialized = true;
-    }
-    /**
-     * Tracks a custom telemetry event.
-     *
-     * @param eventName - The name of the event to track.
-     * @param payload - Optional extra payload properties.
-     */
-    track(eventName, payload) {
-      if (!this.isInitialized || !this.config) {
-        throw new Error("TelemetrySDK is not initialized. Call initialize() first.");
-      }
-      const isMeteringEvent = eventName === "UsageRecorded";
-      const isTelemetryEnabled = this.config.enableTelemetry !== false;
-      const isMeteringEnabled = this.config.enableMetering !== false;
-      if (!isTelemetryEnabled && !isMeteringEvent) {
-        return;
-      }
-      if (isMeteringEvent && !isMeteringEnabled) {
-        return;
-      }
-      const event = {
-        eventId: generateEventId(this.config.moduleKey, eventName),
-        moduleKey: this.config.moduleKey,
-        eventName,
-        organizationId: this.config.organizationId,
-        siteCollectionId: this.config.siteCollectionId,
-        sessionId: this.sessionId || "",
-        timestampUtc: (/* @__PURE__ */ new Date()).toISOString(),
-        payload: payload || {}
-      };
-      const maxQueueSize = this.config.maxQueueSize || 500;
-      if (this.queue.length >= maxQueueSize) {
-        this.queue.shift();
-      }
-      this.queue.push(event);
-    }
-    /**
-     * Sends all currently queued events to the backend.
-     */
-    async flush() {
-      if (!this.config || this.queue.length === 0) {
-        return;
-      }
-      const batch = [...this.queue];
-      this.queue = [];
-      const requestId = generateRequestId(this.config.moduleKey);
-      const formattedEvents = batch.map((event) => {
-        const baseEvent = {
-          eventId: event.eventId,
-          moduleKey: event.moduleKey,
-          eventName: event.eventName,
-          sessionId: event.sessionId,
-          siteCollectionId: event.siteCollectionId,
-          organizationId: event.organizationId,
-          occurredAtUtc: event.timestampUtc,
-          // Backend specific property
-          timestampUtc: event.timestampUtc
-          // SDK standard property
-        };
-        if (event.payload && typeof event.payload === "object") {
-          return {
-            ...baseEvent,
-            ...event.payload,
-            dimensions: {
-              ...baseEvent.dimensions || {},
-              ...event.payload.dimensions || {}
-            }
-          };
-        } else {
-          return {
-            ...baseEvent,
-            payload: event.payload
-          };
-        }
-      });
-      const postBody = {
-        requestId,
-        events: formattedEvents
-      };
-      let base = this.config.apiBaseUrl.replace(/\/+$/, "");
-      if (!base.endsWith("/v1") && !base.includes("/v1/")) {
-        base = `${base}/v1`;
-      }
-      const endpoint = `${base}/telemetry/organizations/${this.config.organizationId}/site-collections/${this.config.siteCollectionId}/events`;
-      try {
-        await retryWithBackoff(async () => {
-          const headers = {
-            "X-Api-Key": this.config.apiKey,
-            "Content-Type": "application/json"
-          };
-          if (typeof window !== "undefined" && window.location) {
-            headers["X-Host-Url"] = window.location.origin;
-          }
-          const response = await fetch(endpoint, {
-            method: "POST",
-            headers,
-            body: JSON.stringify(postBody)
-          });
-          if (!response.ok) {
-            throw new Error(`Telemetry HTTP error! Status: ${response.status}`);
-          }
-        });
-      } catch (error) {
-        console.error("TelemetrySDK: Failed to send batch, re-queuing events...", error);
-        const maxQueueSize = this.config.maxQueueSize || 500;
-        const combined = [...batch, ...this.queue];
-        if (combined.length > maxQueueSize) {
-          this.queue = combined.slice(combined.length - maxQueueSize);
-        } else {
-          this.queue = combined;
-        }
-      }
-    }
-    /**
-     * Destroys the Telemetry SDK, stopping any active timers and flushing remaining events.
-     */
-    destroy() {
-      this.stopFlushTimer();
-      if (this.queue.length > 0) {
-        this.flush().catch((err) => {
-          console.error("TelemetrySDK: Error during destroy flush", err);
-        });
-      }
-      this.isInitialized = false;
-    }
-    /**
-     * Starts the periodic flush timer.
-     */
-    startFlushTimer() {
-      this.stopFlushTimer();
-      const interval = this.config?.flushInterval || 6e4;
-      this.flushTimer = setInterval(() => {
-        this.flush().catch((err) => {
-          console.error("TelemetrySDK: Automatic flush failed", err);
-        });
-      }, interval);
-    }
-    /**
-     * Stops the periodic flush timer.
-     */
-    stopFlushTimer() {
-      if (this.flushTimer) {
-        clearInterval(this.flushTimer);
-        this.flushTimer = void 0;
-      }
-    }
-  };
-
-  // src/sdk/LicensingSDK.ts
-  var LicensingSDK = class {
-    constructor() {
-      this.tierKey = "free";
-      this.featureCache = /* @__PURE__ */ new Map();
-      this.limitCache = /* @__PURE__ */ new Map();
-      this.isInitialized = false;
-    }
-    /**
-     * Initializes the Licensing SDK and loads entitlements.
-     *
-     * @param config - The SDK configuration.
-     */
-    async initialize(config) {
-      validateConfig2(config);
-      this.config = config;
-      if (config.enableLicensing !== false) {
-        try {
-          await this.load();
-        } catch (error) {
-          console.warn("LicensingSDK: Initial load failed. Using safe defaults. Scheduling background retry...", error);
-          this.scheduleBackgroundRetry();
-        }
-      }
-      this.isInitialized = true;
-    }
-    /**
-     * Fetches entitlements from the licensing endpoint and populates the cache.
-     */
-    async load() {
-      if (!this.config) {
-        throw new Error("LicensingSDK is not initialized. Call initialize() first.");
-      }
-      let base = this.config.apiBaseUrl.replace(/\/+$/, "");
-      if (!base.endsWith("/v1") && !base.includes("/v1/")) {
-        base = `${base}/v1`;
-      }
-      const endpoint = `${base}/organizations/${this.config.organizationId}/licensing/entitlements`;
-      const data = await retryWithBackoff(async () => {
-        const headers = {
-          "X-Api-Key": this.config.apiKey,
-          "Accept": "application/json"
-        };
-        if (typeof window !== "undefined" && window.location) {
-          headers["X-Host-Url"] = window.location.origin;
-        }
-        const response = await fetch(endpoint, {
-          method: "GET",
-          headers
-        });
-        if (!response.ok) {
-          throw new Error(`Licensing HTTP error! Status: ${response.status}`);
-        }
-        return await response.json();
-      });
-      this.tierKey = data.tierKey || "free";
-      this.featureCache.clear();
-      if (Array.isArray(data.features)) {
-        for (const f of data.features) {
-          this.featureCache.set(f.featureKey, f.isEnabled);
-        }
-      }
-      this.limitCache.clear();
-      if (Array.isArray(data.limits)) {
-        for (const l of data.limits) {
-          this.limitCache.set(l.limitKey, l.value);
-        }
-      }
-      this.cancelBackgroundRetry();
-    }
-    /**
-     * Forces a refresh of the cached licensing configurations.
-     */
-    async refresh() {
-      await this.load();
-    }
-    /**
-     * Checks if a specific feature is enabled.
-     *
-     * @param featureKey - The feature identifier.
-     * @returns True if enabled; false otherwise.
-     */
-    isFeatureEnabled(featureKey) {
-      if (this.config?.enableLicensing === false) {
-        return true;
-      }
-      return this.featureCache.get(featureKey) ?? false;
-    }
-    /**
-     * Gets the numeric limit for a specific key.
-     *
-     * @param limitKey - The limit key identifier.
-     * @returns The limit value, or null if not found.
-     */
-    getLimit(limitKey) {
-      if (this.config?.enableLicensing === false) {
-        return null;
-      }
-      return this.limitCache.get(limitKey) ?? null;
-    }
-    /**
-     * Destroys the Licensing SDK, cleaning up background retries.
-     */
-    destroy() {
-      this.cancelBackgroundRetry();
-      this.isInitialized = false;
-    }
-    /**
-     * Schedules a background entitlement load retry after a delay.
-     */
-    scheduleBackgroundRetry() {
-      this.cancelBackgroundRetry();
-      this.retryTimer = setTimeout(async () => {
-        try {
-          await this.load();
-          console.log("LicensingSDK: Successfully loaded entitlements in background.");
-        } catch (err) {
-          console.warn("LicensingSDK: Background retry failed. Will retry again later.", err);
-          this.scheduleBackgroundRetry();
-        }
-      }, 3e4);
-    }
-    /**
-     * Cancels any scheduled background retries.
-     */
-    cancelBackgroundRetry() {
-      if (this.retryTimer) {
-        clearTimeout(this.retryTimer);
-        this.retryTimer = void 0;
-      }
-    }
-  };
-
-  // src/sdk/MeteringSDK.ts
-  var MeteringSDK = class {
-    constructor(telemetry) {
-      this.queue = [];
-      this.isInitialized = false;
-      this.telemetry = telemetry;
-    }
-    /**
-     * Initializes the Metering SDK and sets up the flush schedule.
-     *
-     * @param config - The SDK configuration.
-     * @param telemetry - Optional TelemetrySDK instance (required if not passed in constructor).
-     */
-    async initialize(config, telemetry) {
-      validateConfig2(config);
-      this.config = config;
-      if (telemetry) {
-        this.telemetry = telemetry;
-      }
-      if (!this.telemetry) {
-        throw new Error("MeteringSDK: TelemetrySDK instance is required for routing usage events.");
-      }
-      if (config.enableMetering !== false) {
-        this.startFlushTimer();
-      }
-      this.isInitialized = true;
-    }
-    /**
-     * Queues a usage record for future aggregated delivery.
-     *
-     * @param record - The usage metric to record.
-     */
-    recordUsage(record) {
-      if (!this.isInitialized || !this.config || !this.telemetry) {
-        throw new Error("MeteringSDK is not initialized. Call initialize() first.");
-      }
-      if (this.config.enableMetering === false) {
-        return;
-      }
-      if (!record.dimension || typeof record.dimension !== "string" || record.dimension.trim() === "") {
-        throw new Error("MeteringSDK: record.dimension must be a non-empty string.");
-      }
-      if (typeof record.quantity !== "number" || record.quantity <= 0) {
-        throw new Error("MeteringSDK: record.quantity must be a positive number.");
-      }
-      const maxQueueSize = this.config.maxQueueSize || 500;
-      if (this.queue.length >= maxQueueSize) {
-        this.queue.shift();
-      }
-      this.queue.push(record);
-    }
-    /**
-     * Aggregates queued records and pushes them as telemetry events.
-     */
-    async flush() {
-      if (!this.config || !this.telemetry || this.queue.length === 0) {
-        return;
-      }
-      const aggregated = /* @__PURE__ */ new Map();
-      for (const record of this.queue) {
-        const key = `${record.dimension}::${record.featureKey || ""}`;
-        const existing = aggregated.get(key);
-        if (existing) {
-          existing.quantity += record.quantity;
-        } else {
-          aggregated.set(key, { ...record });
-        }
-      }
-      this.queue = [];
-      for (const record of aggregated.values()) {
-        const payload = {
-          classification: "Billable",
-          quantity: record.quantity,
-          unit: "count",
-          dimensions: {
-            billingDimension: record.dimension
-          }
-        };
-        if (record.featureKey) {
-          payload.featureKey = record.featureKey;
-          payload.dimensions.featureKey = record.featureKey;
-        }
-        this.telemetry.track("UsageRecorded", payload);
-      }
-      await this.telemetry.flush();
-    }
-    /**
-     * Destroys the Metering SDK, clearing any active timers and flushing remaining events.
-     */
-    destroy() {
-      this.stopFlushTimer();
-      if (this.queue.length > 0) {
-        this.flush().catch((err) => {
-          console.error("MeteringSDK: Error during destroy flush", err);
-        });
-      }
-      this.isInitialized = false;
-    }
-    /**
-     * Starts the periodic flush timer.
-     */
-    startFlushTimer() {
-      this.stopFlushTimer();
-      const interval = this.config?.flushInterval || 6e4;
-      this.flushTimer = setInterval(() => {
-        this.flush().catch((err) => {
-          console.error("MeteringSDK: Automatic flush failed", err);
-        });
-      }, interval);
-    }
-    /**
-     * Stops the periodic flush timer.
-     */
-    stopFlushTimer() {
-      if (this.flushTimer) {
-        clearInterval(this.flushTimer);
-        this.flushTimer = void 0;
-      }
-    }
-  };
-
-  // src/sdk/SDK.ts
-  var SDK = class {
-    /**
-     * Constructs the SDK with the provided configuration.
-     *
-     * @param config - The SDK configuration object.
-     */
-    constructor(config) {
-      validateConfig2(config);
-      this.config = config;
-      this.telemetry = new TelemetrySDK();
-      this.licensing = new LicensingSDK();
-      this.metering = new MeteringSDK(this.telemetry);
-    }
-    /**
-     * Initializes all underlying modules in parallel.
-     */
-    async initialize() {
-      await Promise.all([
-        this.telemetry.initialize(this.config),
-        this.licensing.initialize(this.config),
-        this.metering.initialize(this.config, this.telemetry)
-      ]);
-    }
-    /**
-     * Gracefully shuts down all modules, flushing remaining queues.
-     */
-    destroy() {
-      this.metering.destroy();
-      this.telemetry.destroy();
-      this.licensing.destroy();
-    }
-  };
-
   // src/index.ts
   registerModalSequence();
   registerModal();
@@ -19219,6 +19049,8 @@ var DAP = (function (exports) {
         getFlowState: () => flowEngine.getState(),
         getManagedFlows: () => multiFlowOrchestrator.getManagedFlows(),
         getUserState: () => userContextService.getDebugState(),
+        getLicensingState: () => licensingService.getDebugState(),
+        getEnforcementEvents: () => licensingService.getEnforcementEvents(),
         testFlow: async (flowId) => {
           if (!_dapConfig) throw new Error("SDK not initialized");
           const previewMode2 = detectPreviewMode();
@@ -19269,6 +19101,12 @@ var DAP = (function (exports) {
     const hostBase = location.origin;
     window.__DAP_CONFIG__ = cfg;
     _dapConfig = cfg;
+    telemetryService.setConfig(cfg);
+    try {
+      await licensingService.init(cfg);
+    } catch (err) {
+      console.error("[DAP] Licensing initialization failed:", err);
+    }
     if (user) {
       userContextService.setUser(user);
       const resolvedUser = userContextService.getUser();
@@ -19297,38 +19135,6 @@ var DAP = (function (exports) {
       return;
     }
     log("CORS check passed, proceeding with SDK initialization");
-    if (dap.sdk) {
-      log("Destroying existing SDK instance...");
-      try {
-        dap.sdk.destroy();
-      } catch (e) {
-        log("Error destroying SDK instance:", e);
-      }
-    }
-    const sdkConfig = {
-      apiBaseUrl: cfg.apiurl,
-      apiKey: cfg.apikey,
-      organizationId: cfg.organizationid,
-      siteCollectionId: cfg.siteid,
-      moduleKey: opts.moduleKey || "dap-sdk",
-      enableTelemetry: opts.enableTelemetry !== void 0 ? opts.enableTelemetry : cfg.enableTelemetry,
-      enableMetering: opts.enableMetering !== void 0 ? opts.enableMetering : cfg.enableMetering,
-      enableLicensing: opts.enableLicensing !== void 0 ? opts.enableLicensing : cfg.enableLicensing,
-      flushInterval: opts.flushInterval || cfg.flushInterval,
-      maxQueueSize: opts.maxQueueSize || cfg.maxQueueSize
-    };
-    try {
-      log("Initializing reusable SDK modules (Telemetry, Licensing, Metering)...");
-      const sdkInstance = new SDK(sdkConfig);
-      await sdkInstance.initialize();
-      dap.sdk = sdkInstance;
-      dap.telemetry = sdkInstance.telemetry;
-      dap.metering = sdkInstance.metering;
-      dap.licensing = sdkInstance.licensing;
-      log("Reusable SDK modules initialized successfully");
-    } catch (sdkErr) {
-      console.error("[DAP] Failed to initialize reusable SDK modules:", sdkErr);
-    }
     let resumeFlowId = null;
     let resumeStepIndex = null;
     if (typeof window !== "undefined") {
@@ -19752,10 +19558,6 @@ var DAP = (function (exports) {
     window.DAP = dap;
   }
 
-  exports.LicensingSDK = LicensingSDK;
-  exports.MeteringSDK = MeteringSDK;
-  exports.SDK = SDK;
-  exports.TelemetrySDK = TelemetrySDK;
   exports.clearUser = clearUser;
   exports.dap = dap;
   exports.executeFlow = executeFlow;
