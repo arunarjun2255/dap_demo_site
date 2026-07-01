@@ -12506,6 +12506,13 @@ var DAP = (function (exports) {
   LocationContextService.getInstance();
 
   // src/services/telemetryService.ts
+  function getBaseUrl(apiurl) {
+    let base = apiurl.replace(/\/$/, "");
+    if (!base.endsWith("/v1") && !base.includes("/v1/")) {
+      base = `${base}/v1`;
+    }
+    return base;
+  }
   function generateUlid() {
     const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
     let now = Date.now();
@@ -12633,7 +12640,8 @@ var DAP = (function (exports) {
         requestId,
         events: [telemetryEvent]
       };
-      const url = `${apiurl.replace(/\/$/, "")}/api/v1/organizations/${organizationid}/telemetry`;
+      const base = getBaseUrl(apiurl);
+      const url = `${base}/telemetry/organizations/${organizationid}/site-collections/${siteid}/events`;
       console.debug(`[DAP Telemetry] Sending event "${eventName}" to ${url}`, payload);
       try {
         await http(config, url, {
@@ -12820,6 +12828,13 @@ var DAP = (function (exports) {
   }
 
   // src/services/licensingService.ts
+  function getBaseUrl2(apiurl) {
+    let base = apiurl.replace(/\/$/, "");
+    if (!base.endsWith("/v1") && !base.includes("/v1/")) {
+      base = `${base}/v1`;
+    }
+    return base;
+  }
   var _LicensingService = class _LicensingService {
     constructor() {
       this._config = null;
@@ -12846,7 +12861,8 @@ var DAP = (function (exports) {
         this._fallbackMode = true;
         return;
       }
-      const entitlementsUrl = `${apiurl.replace(/\/$/, "")}/api/v1/organizations/${organizationid}/licensing/entitlements`;
+      const base = getBaseUrl2(apiurl);
+      const entitlementsUrl = `${base}/organizations/${organizationid}/licensing/entitlements`;
       console.debug(`[DAP Licensing] Fetching entitlements from: ${entitlementsUrl}`);
       try {
         const response = await http(config, entitlementsUrl, {
@@ -12958,7 +12974,8 @@ var DAP = (function (exports) {
       if (!this._config) return [];
       const { organizationid, apiurl } = this._config;
       if (!organizationid || !apiurl) return [];
-      const url = `${apiurl.replace(/\/$/, "")}/api/v1/organizations/${organizationid}/licensing/enforcement-events`;
+      const base = getBaseUrl2(apiurl);
+      const url = `${base}/organizations/${organizationid}/licensing/enforcement-events`;
       try {
         const response = await http(this._config, url, { method: "GET" });
         return Array.isArray(response) ? response : response?.events || [];
