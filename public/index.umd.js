@@ -12646,7 +12646,9 @@ var DAP = (function (exports) {
       try {
         await http(config, url, {
           method: "POST",
-          body: payload
+          body: payload,
+          hostBase: typeof window !== "undefined" ? window.location.origin : "",
+          includeHostHeader: true
         });
         console.debug(`[DAP Telemetry] Event "${eventName}" sent successfully`);
       } catch (err) {
@@ -12866,7 +12868,9 @@ var DAP = (function (exports) {
       console.debug(`[DAP Licensing] Fetching entitlements from: ${entitlementsUrl}`);
       try {
         const response = await http(config, entitlementsUrl, {
-          method: "GET"
+          method: "GET",
+          hostBase: typeof window !== "undefined" ? window.location.origin : "",
+          includeHostHeader: true
         });
         if (response) {
           this.parseEntitlements(response);
@@ -12977,7 +12981,11 @@ var DAP = (function (exports) {
       const base = getBaseUrl2(apiurl);
       const url = `${base}/organizations/${organizationid}/licensing/enforcement-events`;
       try {
-        const response = await http(this._config, url, { method: "GET" });
+        const response = await http(this._config, url, {
+          method: "GET",
+          hostBase: typeof window !== "undefined" ? window.location.origin : "",
+          includeHostHeader: true
+        });
         return Array.isArray(response) ? response : response?.events || [];
       } catch (err) {
         console.warn("[DAP Licensing] Failed to query enforcement events:", err);
