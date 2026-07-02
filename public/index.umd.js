@@ -13133,6 +13133,19 @@ var DAP = (function (exports) {
   }
 
   // src/services/licensingService.ts
+  function getBaseUrl2(apiurl) {
+    const base = apiurl.replace(/\/$/, "");
+    if (base.endsWith("/api/v1")) {
+      return base;
+    }
+    if (base.endsWith("/api")) {
+      return base + "/v1";
+    }
+    if (base.endsWith("/v1")) {
+      return base;
+    }
+    return base + "/api/v1";
+  }
   var _LicensingService = class _LicensingService {
     constructor() {
       this._config = null;
@@ -13170,9 +13183,41 @@ var DAP = (function (exports) {
         this._fallbackMode = true;
         return;
       }
-      console.debug("[DAP Licensing] Player runtime initialized in fail-open mode. Licensing enforcement occurs at admin and ingestion layers.");
-      this._fallbackMode = true;
-      this._isLoaded = true;
+      const adminJwt = config.adminJwt || (typeof window !== "undefined" ? window.__DAP_ADMIN_JWT__ : void 0);
+      if (!adminJwt) {
+        console.debug("[DAP Licensing] Player runtime initialized in fail-open mode. To fetch entitlements for testing, set config.adminJwt or window.__DAP_ADMIN_JWT__.");
+        this._fallbackMode = true;
+        this._isLoaded = true;
+        return;
+      }
+      const entitlementsUrl = `${getBaseUrl2(apiurl)}/organizations/${organizationid}/licensing/entitlements`;
+      console.debug(`[DAP Licensing] Dev-mode: Fetching entitlements from: ${entitlementsUrl}`);
+      const headers = {
+        "Accept": "application/json",
+        "Authorization": `Bearer ${adminJwt}`
+      };
+      try {
+        const response = await http(config, entitlementsUrl, {
+          method: "GET",
+          headers,
+          hostBase: typeof window !== "undefined" ? window.location.origin : "",
+          includeHostHeader: true
+        });
+        if (response) {
+          this.parseEntitlements(response);
+          this._isLoaded = true;
+          this._fallbackMode = false;
+          console.debug(`[DAP Licensing] Entitlements loaded successfully. Tier: ${this._tierKey}`);
+        } else {
+          throw new Error("Empty response from entitlements API");
+        }
+      } catch (err) {
+        console.warn(
+          `[DAP Licensing] Dev-mode fetch failed, falling back to fail-open mode. Error: ${err?.message || err}`
+        );
+        this._fallbackMode = true;
+        this._isLoaded = true;
+      }
     }
     /**
      * Parse features and limits from the API response defensively
