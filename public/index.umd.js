@@ -13184,17 +13184,26 @@ var DAP = (function (exports) {
         this._isLoaded = true;
         return;
       }
-      const adminJwt = config.adminJwt || (typeof window !== "undefined" ? window.__DAP_ADMIN_JWT__ : void 0);
+      let adminJwt = config.adminJwt || (typeof window !== "undefined" ? window.__DAP_ADMIN_JWT__ : void 0);
+      if (!adminJwt && typeof window !== "undefined") {
+        try {
+          adminJwt = localStorage.getItem("accessToken") || sessionStorage.getItem("accessToken") || localStorage.getItem("token") || sessionStorage.getItem("token");
+        } catch (e) {
+          console.debug("[DAP Licensing] Could not read token from browser storage:", e);
+        }
+      }
+      if (!adminJwt) {
+        console.debug("[DAP Licensing] Player runtime initialized in fail-open mode. To fetch entitlements for testing, log in or set window.__DAP_ADMIN_JWT__.");
+        this._fallbackMode = true;
+        this._isLoaded = true;
+        return;
+      }
       const entitlementsUrl = `${getBaseUrl2(apiurl)}/organizations/${organizationid}/licensing/entitlements`;
       console.debug(`[DAP Licensing] Fetching entitlements from: ${entitlementsUrl}`);
       const headers = {
-        "Accept": "application/json"
+        "Accept": "application/json",
+        "Authorization": `Bearer ${adminJwt}`
       };
-      if (adminJwt) {
-        headers["Authorization"] = `Bearer ${adminJwt}`;
-      } else if (config.apikey) {
-        headers["Authorization"] = `Bearer ${config.apikey}`;
-      }
       try {
         const response = await http(config, entitlementsUrl, {
           method: "GET",
