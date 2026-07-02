@@ -13286,7 +13286,13 @@ var DAP = (function (exports) {
       if (this._fallbackMode) {
         return true;
       }
-      return this._features[featureKey] !== void 0 ? this._features[featureKey] : false;
+      if (this._features[featureKey] !== void 0) {
+        return this._features[featureKey];
+      }
+      if (featureKey === "runtime_guidance") {
+        return true;
+      }
+      return false;
     }
     /**
      * Check if a limit is exceeded (fail-open by default if fallback mode)
