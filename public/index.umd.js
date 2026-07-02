@@ -13282,14 +13282,11 @@ var DAP = (function (exports) {
         });
       }
     }
-    /**
-     * Check if a feature is enabled (fail-open by default if fallback mode)
-     */
     isFeatureEnabled(featureKey) {
       if (this._fallbackMode) {
         return true;
       }
-      return this._features[featureKey] !== void 0 ? this._features[featureKey] : true;
+      return this._features[featureKey] !== void 0 ? this._features[featureKey] : false;
     }
     /**
      * Check if a limit is exceeded (fail-open by default if fallback mode)
