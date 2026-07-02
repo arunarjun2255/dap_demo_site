@@ -12741,9 +12741,6 @@ var DAP = (function (exports) {
       if (config?.debug || window.__DAP_DEBUG__) {
         console.debug(`[DAP Telemetry] Queued event: ${eventName}`, event);
       }
-      this.flush().catch((err) => {
-        console.warn("[DAP Telemetry] Flush failed in track:", err);
-      });
     }
     /**
      * Send a player telemetry event (retains backward compatibility).
