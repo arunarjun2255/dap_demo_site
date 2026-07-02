@@ -13192,6 +13192,8 @@ var DAP = (function (exports) {
       };
       if (adminJwt) {
         headers["Authorization"] = `Bearer ${adminJwt}`;
+      } else if (config.apikey) {
+        headers["Authorization"] = `Bearer ${config.apikey}`;
       }
       try {
         const response = await http(config, entitlementsUrl, {
