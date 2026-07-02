@@ -41,10 +41,10 @@ var DAP = (function (exports) {
 
     /* Hide webkit validation bubble inside DAP forms */
     ${DAP_FORM_CLASSES.map(
-    (cls) => `.${cls} input::-webkit-validation-bubble,
+      (cls) => `.${cls} input::-webkit-validation-bubble,
     .${cls} input::-webkit-validation-bubble-message,
     .${cls} input::-webkit-validation-bubble-arrow`
-  ).join(",\n    ")} {
+    ).join(",\n    ")} {
       display: none !important;
     }
   `;
@@ -2435,7 +2435,7 @@ var DAP = (function (exports) {
       return path === normP || path === normP.replace(/\/$/, "") || `${normP}/` === path;
     }
     const regexStr = "^" + normP.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + // * → .*
-    "$";
+      "$";
     return new RegExp(regexStr, "i").test(path);
   }
   function resolveNavigationUrl(targetUrl) {
@@ -4669,7 +4669,7 @@ var DAP = (function (exports) {
     console.debug("[DAP] Modal flow ID:", id);
     const completionTracker = payload._completionTracker;
     ensureStyles2();
-    const { overlay, modal, header} = createModalElements(payload);
+    const { overlay, modal, header } = createModalElements(payload);
     overlay.id = `dap-modal-overlay-${id}`;
     document.documentElement.appendChild(overlay);
     const prevActive = document.activeElement;
@@ -12357,14 +12357,14 @@ var DAP = (function (exports) {
     }
     interceptHistoryMethods() {
       const self = this;
-      history.pushState = function(state, title, url) {
+      history.pushState = function (state, title, url) {
         self.originalPushState.apply(history, arguments);
         console.debug("[DAP] PageContextService: PushState detected:", url);
         setTimeout(() => {
           self.updateContext("navigation");
         }, 0);
       };
-      history.replaceState = function(state, title, url) {
+      history.replaceState = function (state, title, url) {
         self.originalReplaceState.apply(history, arguments);
         console.debug("[DAP] PageContextService: ReplaceState detected:", url);
         setTimeout(() => {
@@ -12653,9 +12653,16 @@ var DAP = (function (exports) {
       this.flush().catch((err) => console.error("[DAP Telemetry] Failed to flush telemetry on startup:", err));
     }
     /**
-     * Tracks a telemetry event.
-     * @param eventName Name of the event (e.g. 'feature.used')
-     * @param payload Custom properties of the event
+     * Tracks a telemetry event with proper metering dimensions.
+     * 
+     * Event structure follows the v1 telemetry ingestion spec:
+     * - moduleKey: "player" (runtime SDK)
+     * - eventName: stable event identifier (e.g., 'flow.launched', 'feature.used')
+     * - billingDimension: one of EventsIngested, ConsumerSessions, BusinessActiveUsers, etc.
+     * - classification: 0=Billable, 1=Informational, 2=Rejected
+     * 
+     * @param eventName Name of the event (e.g. 'feature.used', 'flow.launched')
+     * @param payload Custom properties including dimensions.billingDimension for metering
      */
     track(eventName, payload = {}) {
       if (!this._isInitialized) {
@@ -12681,8 +12688,8 @@ var DAP = (function (exports) {
       }
       const siteCollectionId = config?.siteid || payload.siteCollectionId || null;
       const rawDimensions = {
-        billingDimension: payload.dimensions?.billingDimension || "FeatureUsage",
-        featureKey: payload.dimensions?.featureKey || payload.featureKey || "",
+        billingDimension: payload.dimensions?.billingDimension || payload.billingDimension || "EventsIngested",
+        featureKey: payload.dimensions?.featureKey || payload.featureKey || "runtime_guidance",
         pageUrl: payload.dimensions?.pageUrl || (typeof window !== "undefined" ? window.location.href : ""),
         host: payload.dimensions?.host || (typeof window !== "undefined" ? window.location.host : ""),
         browser: getBrowserName(),
@@ -12739,7 +12746,13 @@ var DAP = (function (exports) {
       });
     }
     /**
-     * Send a player telemetry event (retains backward compatibility)
+     * Send a player telemetry event (retains backward compatibility).
+     * 
+     * Maps runtime events to proper metering billing dimensions per v1 spec:
+     * - flow.launched → EventsIngested
+     * - flow.step_viewed → EventsIngested
+     * - flow.completed → EventsIngested
+     * - flow.exited → EventsIngested (informational)
      */
     async trackPlayerEvent(eventName, flowId, options) {
       const featureKey = options?.isSurvey ? "survey_insights" : "runtime_guidance";
@@ -12752,7 +12765,9 @@ var DAP = (function (exports) {
           referrer: typeof document !== "undefined" ? document.referrer : "",
           host: typeof window !== "undefined" ? window.location.host : "",
           ...options?.stepId ? { stepId: options.stepId } : {}
-        }
+        },
+        // Events during normal flow execution are Billable
+        classification: "Billable"
       });
     }
     /**
@@ -13118,19 +13133,6 @@ var DAP = (function (exports) {
   }
 
   // src/services/licensingService.ts
-  function getBaseUrl2(apiurl) {
-    const base = apiurl.replace(/\/$/, "");
-    if (base.endsWith("/api/v1")) {
-      return base;
-    }
-    if (base.endsWith("/api")) {
-      return base + "/v1";
-    }
-    if (base.endsWith("/v1")) {
-      return base;
-    }
-    return base + "/api/v1";
-  }
   var _LicensingService = class _LicensingService {
     constructor() {
       this._config = null;
@@ -13147,45 +13149,30 @@ var DAP = (function (exports) {
       return this._instance;
     }
     /**
-     * Initialize the service by fetching entitlements
+     * Initialize the service.
+     * 
+     * NOTE: The Player (runtime SDK) uses API-key authentication and should NOT fetch
+     * licensing entitlements from the admin-protected endpoint. Licensing is an admin/organization
+     * concern (requires JWT auth). The SDK operates in fail-open licensing mode by design:
+     * - All features are allowed
+     * - All quota checks pass
+     * This allows the runtime to render flows freely and emit telemetry for metering/billing.
+     * 
+     * Licensing enforcement happens at:
+     * 1. Admin portal level (JWT-authenticated)
+     * 2. Telemetry ingestion level (backend enforces quotas/entitlements)
      */
     async init(config) {
       this._config = config;
-      const { organizationid, apiurl, siteid } = config;
+      const { organizationid, apiurl } = config;
       if (!organizationid || !apiurl) {
-        console.warn("[DAP Licensing] Missing config for licensing, entering fallback (fail-open) mode");
+        console.warn("[DAP Licensing] Missing config, entering fail-open fallback mode");
         this._fallbackMode = true;
         return;
       }
-      const entitlementsUrl = `${getBaseUrl2(apiurl)}/organizations/${organizationid}/licensing/entitlements`;
-      console.debug(`[DAP Licensing] Fetching entitlements from: ${entitlementsUrl}`);
-      const headers = {
-        "Accept": "application/json",
-        "X-Site-Collection-Id": siteid || "",
-        "X-Site-Id": siteid || "",
-        "X-SiteCollection-Id": siteid || ""
-      };
-      try {
-        const response = await http(config, entitlementsUrl, {
-          method: "GET",
-          headers,
-          hostBase: typeof window !== "undefined" ? window.location.origin : "",
-          includeHostHeader: true
-        });
-        if (response) {
-          this.parseEntitlements(response);
-          this._isLoaded = true;
-          this._fallbackMode = false;
-          console.debug(`[DAP Licensing] Entitlements loaded successfully. Tier: ${this._tierKey}`);
-        } else {
-          throw new Error("Empty response from entitlements API");
-        }
-      } catch (err) {
-        console.warn(
-          `[DAP Licensing] Failed to query entitlements. Entering fail-open fallback mode. Error: ${err.message}`
-        );
-        this._fallbackMode = true;
-      }
+      console.debug("[DAP Licensing] Player runtime initialized in fail-open mode. Licensing enforcement occurs at admin and ingestion layers.");
+      this._fallbackMode = true;
+      this._isLoaded = true;
     }
     /**
      * Parse features and limits from the API response defensively
@@ -13272,31 +13259,17 @@ var DAP = (function (exports) {
       return false;
     }
     /**
-     * Query licensing enforcement events from the backend
+     * Query licensing enforcement events from the backend (returns empty for player runtime).
+     * 
+     * NOTE: The enforcement-events endpoint requires JWT authentication (admin level).
+     * The player runtime does not fetch this endpoint. Enforcement events are logged
+     * by the backend during telemetry ingestion and are visible in admin dashboards only.
+     * 
+     * @returns Empty array (enforcement events are not visible at runtime)
      */
     async getEnforcementEvents() {
-      if (!this._config) return [];
-      const { organizationid, apiurl, siteid } = this._config;
-      if (!organizationid || !apiurl) return [];
-      const url = `${getBaseUrl2(apiurl)}/organizations/${organizationid}/licensing/enforcement-events`;
-      const headers = {
-        "Accept": "application/json",
-        "X-Site-Collection-Id": siteid || "",
-        "X-Site-Id": siteid || "",
-        "X-SiteCollection-Id": siteid || ""
-      };
-      try {
-        const response = await http(this._config, url, {
-          method: "GET",
-          headers,
-          hostBase: typeof window !== "undefined" ? window.location.origin : "",
-          includeHostHeader: true
-        });
-        return Array.isArray(response) ? response : response?.events || [];
-      } catch (err) {
-        console.warn("[DAP Licensing] Failed to query enforcement events:", err);
-        return [];
-      }
+      console.debug("[DAP Licensing] Player runtime does not fetch enforcement events. These are admin-visible only.");
+      return [];
     }
     /**
      * Get current debugging state
@@ -14654,7 +14627,7 @@ var DAP = (function (exports) {
         return path === p || path === p.replace(/\/$/, "") || `${p}/` === path;
       }
       const regexStr = "^" + p.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + // * → .*
-      "$";
+        "$";
       return new RegExp(regexStr, "i").test(path);
     }
     getStepTargetUrl(step) {
