@@ -13182,22 +13182,17 @@ var DAP = (function (exports) {
       if (!organizationid || !apiurl) {
         console.warn("[DAP Licensing] Missing config, entering fail-open fallback mode");
         this._fallbackMode = true;
-        this._isLoaded = true;
         return;
       }
       const adminJwt = config.adminJwt || (typeof window !== "undefined" ? window.__DAP_ADMIN_JWT__ : void 0);
-      if (!adminJwt) {
-        console.debug("[DAP Licensing] Player runtime initialized in fail-open mode. To fetch entitlements for testing, set config.adminJwt or window.__DAP_ADMIN_JWT__.");
-        this._fallbackMode = true;
-        this._isLoaded = true;
-        return;
-      }
       const entitlementsUrl = `${getBaseUrl2(apiurl)}/organizations/${organizationid}/licensing/entitlements`;
       console.debug(`[DAP Licensing] Fetching entitlements from: ${entitlementsUrl}`);
       const headers = {
-        "Accept": "application/json",
-        "Authorization": `Bearer ${adminJwt}`
+        "Accept": "application/json"
       };
+      if (adminJwt) {
+        headers["Authorization"] = `Bearer ${adminJwt}`;
+      }
       try {
         const response = await http(config, entitlementsUrl, {
           method: "GET",
@@ -13215,7 +13210,7 @@ var DAP = (function (exports) {
         }
       } catch (err) {
         console.warn(
-          `[DAP Licensing] Fetch failed, falling back to fail-open mode. Error: ${err?.message || err}`
+          `[DAP Licensing] Entitlements fetch failed, falling back to fail-open mode. Error: ${err?.message || err}`
         );
         this._fallbackMode = true;
         this._isLoaded = true;
