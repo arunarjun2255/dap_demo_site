@@ -13185,7 +13185,7 @@ var DAP = (function (exports) {
       let adminJwt = config.adminJwt || (typeof window !== "undefined" ? window.__DAP_ADMIN_JWT__ : void 0);
       if (!adminJwt && typeof window !== "undefined") {
         try {
-          adminJwt = localStorage.getItem("accessToken") || sessionStorage.getItem("accessToken") || localStorage.getItem("token") || sessionStorage.getItem("token") || void 0;
+          adminJwt = localStorage.getItem("dap_admin_jwt") || sessionStorage.getItem("dap_admin_jwt") || void 0;
         } catch (e) {
           console.debug("[DAP Licensing] Could not read token from browser storage:", e);
         }
