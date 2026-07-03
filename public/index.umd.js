@@ -107,14 +107,10 @@ var DAP = (function (exports) {
   // src/http.ts
   async function http(cfg, path, opts = {}) {
     const method = (opts.method || "GET").toUpperCase();
-    const isEntitlements = path.includes("/licensing/entitlements");
     const headers = {
       "X-Api-Key": cfg.apikey,
-      "X-API-KEY": cfg.apikey,
-      ...isEntitlements ? {} : {
-        "X-Organization-Id": cfg.organizationid,
-        "X-Site-Id": cfg.siteid
-      },
+      "X-Organization-Id": cfg.organizationid,
+      "X-Site-Id": cfg.siteid,
       ...opts.includeHostHeader && opts.hostBase ? { "X-Host-Url": opts.hostBase } : {},
       ...opts.headers || {}
     };
@@ -12746,6 +12742,9 @@ var DAP = (function (exports) {
       if (config?.debug || window.__DAP_DEBUG__) {
         console.debug(`[DAP Telemetry] Queued event: ${eventName}`, event);
       }
+      this.flush().catch((err) => {
+        console.warn("[DAP Telemetry] Flush failed in track:", err);
+      });
     }
     /**
      * Send a player telemetry event (retains backward compatibility).
@@ -13186,19 +13185,9 @@ var DAP = (function (exports) {
         this._isLoaded = true;
         return;
       }
-      let adminJwt = config.adminJwt || (typeof window !== "undefined" ? window.__DAP_ADMIN_JWT__ : void 0);
-      if (!adminJwt && typeof window !== "undefined") {
-        try {
-          adminJwt = localStorage.getItem("dap_admin_jwt") || sessionStorage.getItem("dap_admin_jwt") || void 0;
-        } catch (e) {
-          console.debug("[DAP Licensing] Could not read token from browser storage:", e);
-        }
-      }
-      const hasApiKey = !!config.apikey;
-      if (!adminJwt && !hasApiKey) {
-        console.debug(
-          "[DAP Licensing] Player runtime initialized in fail-open mode. No JWT or API Key provided."
-        );
+      const adminJwt = config.adminJwt || (typeof window !== "undefined" ? window.__DAP_ADMIN_JWT__ : void 0);
+      if (!adminJwt) {
+        console.debug("[DAP Licensing] Player runtime initialized in fail-open mode. To fetch entitlements for testing, set config.adminJwt or window.__DAP_ADMIN_JWT__.");
         this._fallbackMode = true;
         this._isLoaded = true;
         return;
@@ -13206,16 +13195,14 @@ var DAP = (function (exports) {
       const entitlementsUrl = `${getBaseUrl2(apiurl)}/organizations/${organizationid}/licensing/entitlements`;
       console.debug(`[DAP Licensing] Fetching entitlements from: ${entitlementsUrl}`);
       const headers = {
-        "Accept": "application/json"
+        "Accept": "application/json",
+        "Authorization": `Bearer ${adminJwt}`
       };
-      if (adminJwt) {
-        headers["Authorization"] = `Bearer ${adminJwt}`;
-      }
       try {
         const response = await http(config, entitlementsUrl, {
           method: "GET",
           headers,
-          hostBase: typeof window !== "undefined" ? window.location.hostname : "",
+          hostBase: typeof window !== "undefined" ? window.location.origin : "",
           includeHostHeader: true
         });
         if (response) {
@@ -13260,7 +13247,7 @@ var DAP = (function (exports) {
           if (l && typeof l.limitKey === "string") {
             this._limits[l.limitKey] = {
               limitKey: l.limitKey,
-              value: typeof l.value === "number" ? l.value : typeof l.allowed === "number" ? l.allowed : 0,
+              value: typeof l.value === "number" ? l.value : 0,
               unit: l.unit || "count",
               consumed: typeof l.consumed === "number" ? l.consumed : 0,
               hardLimit: l.hardLimit !== void 0 ? !!l.hardLimit : !!l.hard_limit
@@ -13273,7 +13260,7 @@ var DAP = (function (exports) {
           if (item && typeof item === "object") {
             this._limits[key] = {
               limitKey: key,
-              value: typeof item.value === "number" ? item.value : typeof item.allowed === "number" ? item.allowed : 0,
+              value: typeof item.value === "number" ? item.value : 0,
               unit: item.unit || "count",
               consumed: typeof item.consumed === "number" ? item.consumed : 0,
               hardLimit: item.hardLimit !== void 0 ? !!item.hardLimit : !!item.hard_limit
@@ -13289,17 +13276,14 @@ var DAP = (function (exports) {
         });
       }
     }
+    /**
+     * Check if a feature is enabled (fail-open by default if fallback mode)
+     */
     isFeatureEnabled(featureKey) {
       if (this._fallbackMode) {
         return true;
       }
-      if (this._features[featureKey] !== void 0) {
-        return this._features[featureKey];
-      }
-      if (featureKey === "runtime_guidance") {
-        return true;
-      }
-      return false;
+      return this._features[featureKey] !== void 0 ? this._features[featureKey] : true;
     }
     /**
      * Check if a limit is exceeded (fail-open by default if fallback mode)
@@ -19502,7 +19486,7 @@ var DAP = (function (exports) {
     if (_corsCheckPassed === null) {
       log("Performing CORS origin check...");
       try {
-        _corsCheckPassed = await checkCorsAccess(cfg, typeof window !== "undefined" ? window.location.hostname : "");
+        _corsCheckPassed = await checkCorsAccess(cfg, location.origin);
       } catch (err) {
         console.error("[DAP] CORS check encountered an unexpected error:", err);
         _corsCheckPassed = false;
@@ -19662,7 +19646,7 @@ var DAP = (function (exports) {
     );
     try {
       _corsCheckPassed = null;
-      const allowed = await checkCorsAccess(_dapConfig, typeof window !== "undefined" ? window.location.hostname : "");
+      const allowed = await checkCorsAccess(_dapConfig, location.origin);
       _corsCheckPassed = allowed;
       if (!allowed) {
         console.error(
