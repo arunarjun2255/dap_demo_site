@@ -13183,7 +13183,7 @@ var DAP = (function (exports) {
         return;
       }
       let adminJwt = config.adminJwt || (typeof window !== "undefined" ? window.__DAP_ADMIN_JWT__ : void 0);
-      if (!adminJwt && !config.apikey && typeof window !== "undefined") {
+      if (!adminJwt && typeof window !== "undefined") {
         try {
           adminJwt = localStorage.getItem("accessToken") || sessionStorage.getItem("accessToken") || localStorage.getItem("token") || sessionStorage.getItem("token");
         } catch (e) {
