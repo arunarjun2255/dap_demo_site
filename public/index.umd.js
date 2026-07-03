@@ -13130,6 +13130,19 @@ var DAP = (function (exports) {
   }
 
   // src/services/licensingService.ts
+  function getBaseUrl2(apiurl) {
+    const base = apiurl.replace(/\/$/, "");
+    if (base.endsWith("/api/v1")) {
+      return base;
+    }
+    if (base.endsWith("/api")) {
+      return base + "/v1";
+    }
+    if (base.endsWith("/v1")) {
+      return base;
+    }
+    return base + "/api/v1";
+  }
   var _LicensingService = class _LicensingService {
     constructor() {
       this._config = null;
@@ -13146,13 +13159,45 @@ var DAP = (function (exports) {
       return this._instance;
     }
     /**
-     * Initialize the service in fail-open mode
+     * Initialize the service by fetching entitlements
      */
     async init(config) {
       this._config = config;
-      console.debug("[DAP Licensing] Player runtime initialized in fail-open mode.");
-      this._fallbackMode = true;
-      this._isLoaded = true;
+      const { organizationid, apiurl, siteid } = config;
+      if (!organizationid || !apiurl) {
+        console.warn("[DAP Licensing] Missing config for licensing, entering fallback (fail-open) mode");
+        this._fallbackMode = true;
+        return;
+      }
+      const entitlementsUrl = `${getBaseUrl2(apiurl)}/organizations/${organizationid}/licensing/entitlements`;
+      console.debug(`[DAP Licensing] Fetching entitlements from: ${entitlementsUrl}`);
+      const headers = {
+        "Accept": "application/json",
+        "X-Site-Collection-Id": siteid || "",
+        "X-Site-Id": siteid || "",
+        "X-SiteCollection-Id": siteid || ""
+      };
+      try {
+        const response = await http(config, entitlementsUrl, {
+          method: "GET",
+          headers,
+          hostBase: typeof window !== "undefined" ? window.location.origin : "",
+          includeHostHeader: true
+        });
+        if (response) {
+          this.parseEntitlements(response);
+          this._isLoaded = true;
+          this._fallbackMode = false;
+          console.debug(`[DAP Licensing] Entitlements loaded successfully. Tier: ${this._tierKey}`);
+        } else {
+          throw new Error("Empty response from entitlements API");
+        }
+      } catch (err) {
+        console.warn(
+          `[DAP Licensing] Failed to query entitlements. Entering fail-open fallback mode. Error: ${err.message}`
+        );
+        this._fallbackMode = true;
+      }
     }
     /**
      * Parse features and limits from the API response defensively
@@ -13180,7 +13225,7 @@ var DAP = (function (exports) {
           if (l && typeof l.limitKey === "string") {
             this._limits[l.limitKey] = {
               limitKey: l.limitKey,
-              value: typeof l.value === "number" ? l.value : 0,
+              value: typeof l.value === "number" ? l.value : typeof l.allowed === "number" ? l.allowed : 0,
               unit: l.unit || "count",
               consumed: typeof l.consumed === "number" ? l.consumed : 0,
               hardLimit: l.hardLimit !== void 0 ? !!l.hardLimit : !!l.hard_limit
@@ -13193,7 +13238,7 @@ var DAP = (function (exports) {
           if (item && typeof item === "object") {
             this._limits[key] = {
               limitKey: key,
-              value: typeof item.value === "number" ? item.value : 0,
+              value: typeof item.value === "number" ? item.value : typeof item.allowed === "number" ? item.allowed : 0,
               unit: item.unit || "count",
               consumed: typeof item.consumed === "number" ? item.consumed : 0,
               hardLimit: item.hardLimit !== void 0 ? !!item.hardLimit : !!item.hard_limit
@@ -13242,10 +13287,31 @@ var DAP = (function (exports) {
       return false;
     }
     /**
-     * Query licensing enforcement events from the backend (always returns empty in fail-open player)
+     * Query licensing enforcement events from the backend
      */
     async getEnforcementEvents() {
-      return [];
+      if (!this._config) return [];
+      const { organizationid, apiurl, siteid } = this._config;
+      if (!organizationid || !apiurl) return [];
+      const url = `${getBaseUrl2(apiurl)}/organizations/${organizationid}/licensing/enforcement-events`;
+      const headers = {
+        "Accept": "application/json",
+        "X-Site-Collection-Id": siteid || "",
+        "X-Site-Id": siteid || "",
+        "X-SiteCollection-Id": siteid || ""
+      };
+      try {
+        const response = await http(this._config, url, {
+          method: "GET",
+          headers,
+          hostBase: typeof window !== "undefined" ? window.location.origin : "",
+          includeHostHeader: true
+        });
+        return Array.isArray(response) ? response : response?.events || [];
+      } catch (err) {
+        console.warn("[DAP Licensing] Failed to query enforcement events:", err);
+        return [];
+      }
     }
     /**
      * Get current debugging state
