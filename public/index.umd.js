@@ -13185,7 +13185,17 @@ var DAP = (function (exports) {
       let adminJwt = config.adminJwt || (typeof window !== "undefined" ? window.__DAP_ADMIN_JWT__ : void 0);
       if (!adminJwt && typeof window !== "undefined") {
         try {
-          adminJwt = localStorage.getItem("accessToken") || sessionStorage.getItem("accessToken") || localStorage.getItem("token") || sessionStorage.getItem("token");
+          if (typeof window.getStorageItem === "function") {
+            const res = window.getStorageItem("accessToken") || window.getStorageItem("token");
+            if (res && typeof res.then === "function") {
+              adminJwt = await res;
+            } else {
+              adminJwt = res;
+            }
+          }
+          if (!adminJwt) {
+            adminJwt = localStorage.getItem("accessToken") || sessionStorage.getItem("accessToken") || localStorage.getItem("token") || sessionStorage.getItem("token");
+          }
         } catch (e) {
           console.debug("[DAP Licensing] Could not read token from browser storage:", e);
         }
