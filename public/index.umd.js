@@ -13172,6 +13172,11 @@ var DAP = (function (exports) {
      * Licensing enforcement happens at:
      * 1. Admin portal level (JWT-authenticated)
      * 2. Telemetry ingestion level (backend enforces quotas/entitlements)
+     *
+     * IMPORTANT: config.apikey alone is NOT sufficient credential to call the
+     * entitlements endpoint — that endpoint is JWT-only. An apikey being present
+     * indicates player-runtime usage, which must stay fail-open regardless of
+     * whether an apikey exists. Only a real adminJwt authorizes the fetch.
      */
     async init(config) {
       this._config = config;
@@ -13190,8 +13195,8 @@ var DAP = (function (exports) {
           console.debug("[DAP Licensing] Could not read token from browser storage:", e);
         }
       }
-      if (!adminJwt && !config.apikey) {
-        console.debug("[DAP Licensing] Player runtime initialized in fail-open mode. To fetch entitlements for testing, log in, set config.apikey, or set window.__DAP_ADMIN_JWT__.");
+      if (!adminJwt) {
+        console.debug("[DAP Licensing] No admin JWT available. Player runtime initialized in fail-open mode. To fetch entitlements for testing, log in, or set window.__DAP_ADMIN_JWT__ / config.adminJwt.");
         this._fallbackMode = true;
         this._isLoaded = true;
         return;
@@ -13199,11 +13204,9 @@ var DAP = (function (exports) {
       const entitlementsUrl = `${getBaseUrl2(apiurl)}/organizations/${organizationid}/licensing/entitlements`;
       console.debug(`[DAP Licensing] Fetching entitlements from: ${entitlementsUrl}`);
       const headers = {
-        "Accept": "application/json"
+        "Accept": "application/json",
+        "Authorization": `Bearer ${adminJwt}`
       };
-      if (adminJwt) {
-        headers["Authorization"] = `Bearer ${adminJwt}`;
-      }
       try {
         const response = await http(config, entitlementsUrl, {
           method: "GET",
