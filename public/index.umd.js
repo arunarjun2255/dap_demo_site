@@ -13211,7 +13211,7 @@ var DAP = (function (exports) {
         const response = await http(config, entitlementsUrl, {
           method: "GET",
           headers,
-          hostBase: typeof window !== "undefined" ? window.location.origin : "",
+          hostBase: typeof window !== "undefined" ? window.location.hostname : "",
           includeHostHeader: true
         });
         if (response) {
