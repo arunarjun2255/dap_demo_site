@@ -80,7 +80,6 @@ var DAP = (function (exports) {
       siteid: j.siteid || j.siteId || j.siteCollectionId || "",
       apikey: j.apikey || j.apiKey || "",
       apiurl: j.apiurl || j.apiUrl || "",
-      adminJwt: j.adminJwt || j.admin_jwt || "",
       enableDraggableModals: j.enableDraggableModals !== void 0 ? j.enableDraggableModals : j.enable_draggable_modals
     };
   }
