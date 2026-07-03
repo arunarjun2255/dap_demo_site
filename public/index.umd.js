@@ -80,7 +80,8 @@ var DAP = (function (exports) {
       siteid: j.siteid || j.siteId || j.siteCollectionId || "",
       apikey: j.apikey || j.apiKey || "",
       apiurl: j.apiurl || j.apiUrl || "",
-      enableDraggableModals: j.enableDraggableModals !== void 0 ? j.enableDraggableModals : j.enable_draggable_modals
+      enableDraggableModals: j.enableDraggableModals !== void 0 ? j.enableDraggableModals : j.enable_draggable_modals,
+      adminJwt: j.adminJwt || j.admin_jwt
     };
   }
   function validateConfig(j) {
@@ -13182,15 +13183,17 @@ var DAP = (function (exports) {
         return;
       }
       let adminJwt = config.adminJwt || (typeof window !== "undefined" ? window.__DAP_ADMIN_JWT__ : void 0);
-      if (!adminJwt && !config.apikey && typeof window !== "undefined") {
+      if (!adminJwt && typeof window !== "undefined") {
         try {
-          adminJwt = localStorage.getItem("accessToken") || sessionStorage.getItem("accessToken") || localStorage.getItem("token") || sessionStorage.getItem("token");
+          adminJwt = localStorage.getItem("dap_admin_jwt") || sessionStorage.getItem("dap_admin_jwt") || void 0;
         } catch (e) {
           console.debug("[DAP Licensing] Could not read token from browser storage:", e);
         }
       }
       if (!adminJwt) {
-        console.debug("[DAP Licensing] Player runtime initialized in fail-open mode. To fetch entitlements for testing, log in or set window.__DAP_ADMIN_JWT__.");
+        console.debug(
+          "[DAP Licensing] Player runtime initialized in fail-open mode. To fetch entitlements for testing, log in or set window.__DAP_ADMIN_JWT__."
+        );
         this._fallbackMode = true;
         this._isLoaded = true;
         return;
@@ -13250,7 +13253,7 @@ var DAP = (function (exports) {
           if (l && typeof l.limitKey === "string") {
             this._limits[l.limitKey] = {
               limitKey: l.limitKey,
-              value: typeof l.value === "number" ? l.value : 0,
+              value: typeof l.value === "number" ? l.value : typeof l.allowed === "number" ? l.allowed : 0,
               unit: l.unit || "count",
               consumed: typeof l.consumed === "number" ? l.consumed : 0,
               hardLimit: l.hardLimit !== void 0 ? !!l.hardLimit : !!l.hard_limit
@@ -13263,7 +13266,7 @@ var DAP = (function (exports) {
           if (item && typeof item === "object") {
             this._limits[key] = {
               limitKey: key,
-              value: typeof item.value === "number" ? item.value : 0,
+              value: typeof item.value === "number" ? item.value : typeof item.allowed === "number" ? item.allowed : 0,
               unit: item.unit || "count",
               consumed: typeof item.consumed === "number" ? item.consumed : 0,
               hardLimit: item.hardLimit !== void 0 ? !!item.hardLimit : !!item.hard_limit
