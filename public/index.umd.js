@@ -13186,12 +13186,17 @@ var DAP = (function (exports) {
       if (!adminJwt && typeof window !== "undefined") {
         try {
           if (typeof window.getStorageItem === "function") {
-            const res = window.getStorageItem("accessToken") || window.getStorageItem("token");
+            let res = window.getStorageItem("accessToken");
             if (res && typeof res.then === "function") {
-              adminJwt = await res;
-            } else {
-              adminJwt = res;
+              res = await res;
             }
+            if (!res) {
+              res = window.getStorageItem("token");
+              if (res && typeof res.then === "function") {
+                res = await res;
+              }
+            }
+            adminJwt = res;
           }
           if (!adminJwt) {
             adminJwt = localStorage.getItem("accessToken") || sessionStorage.getItem("accessToken") || localStorage.getItem("token") || sessionStorage.getItem("token");
