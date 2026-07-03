@@ -19502,7 +19502,7 @@ var DAP = (function (exports) {
     if (_corsCheckPassed === null) {
       log("Performing CORS origin check...");
       try {
-        _corsCheckPassed = await checkCorsAccess(cfg, location.origin);
+        _corsCheckPassed = await checkCorsAccess(cfg, typeof window !== "undefined" ? window.location.hostname : "");
       } catch (err) {
         console.error("[DAP] CORS check encountered an unexpected error:", err);
         _corsCheckPassed = false;
@@ -19662,7 +19662,7 @@ var DAP = (function (exports) {
     );
     try {
       _corsCheckPassed = null;
-      const allowed = await checkCorsAccess(_dapConfig, location.origin);
+      const allowed = await checkCorsAccess(_dapConfig, typeof window !== "undefined" ? window.location.hostname : "");
       _corsCheckPassed = allowed;
       if (!allowed) {
         console.error(
