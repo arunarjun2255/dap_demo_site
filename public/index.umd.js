@@ -13130,246 +13130,6 @@ var DAP = (function (exports) {
     trackingState.reset(flowId);
   }
 
-  // src/services/licensingService.ts
-  function getBaseUrl2(apiurl) {
-    const base = apiurl.replace(/\/$/, "");
-    if (base.endsWith("/api/v1")) {
-      return base;
-    }
-    if (base.endsWith("/api")) {
-      return base + "/v1";
-    }
-    if (base.endsWith("/v1")) {
-      return base;
-    }
-    return base + "/api/v1";
-  }
-  var _LicensingService = class _LicensingService {
-    constructor() {
-      this._config = null;
-      this._features = {};
-      this._limits = {};
-      this._isLoaded = false;
-      this._fallbackMode = false;
-      this._tierKey = "unknown";
-    }
-    static getInstance() {
-      if (!this._instance) {
-        this._instance = new _LicensingService();
-      }
-      return this._instance;
-    }
-    /**
-     * Initialize the service.
-     * 
-     * NOTE: The Player (runtime SDK) uses API-key authentication and should NOT fetch
-     * licensing entitlements from the admin-protected endpoint. Licensing is an admin/organization
-     * concern (requires JWT auth). The SDK operates in fail-open licensing mode by design:
-     * - All features are allowed
-     * - All quota checks pass
-     * This allows the runtime to render flows freely and emit telemetry for metering/billing.
-     * 
-     * Licensing enforcement happens at:
-     * 1. Admin portal level (JWT-authenticated)
-     * 2. Telemetry ingestion level (backend enforces quotas/entitlements)
-     */
-    async init(config) {
-      this._config = config;
-      const { organizationid, apiurl } = config;
-      if (!organizationid || !apiurl) {
-        console.warn("[DAP Licensing] Missing config, entering fail-open fallback mode");
-        this._fallbackMode = true;
-        this._isLoaded = true;
-        return;
-      }
-      let adminJwt = config.adminJwt || (typeof window !== "undefined" ? window.__DAP_ADMIN_JWT__ : void 0);
-      if (!adminJwt && !config.apikey && typeof window !== "undefined") {
-        try {
-          adminJwt = localStorage.getItem("accessToken") || sessionStorage.getItem("accessToken") || localStorage.getItem("token") || sessionStorage.getItem("token");
-        } catch (e) {
-          console.debug("[DAP Licensing] Could not read token from browser storage:", e);
-        }
-      }
-      if (!adminJwt && !config.apikey) {
-        console.debug("[DAP Licensing] Player runtime initialized in fail-open mode. To fetch entitlements for testing, log in, set config.apikey, or set window.__DAP_ADMIN_JWT__.");
-        this._fallbackMode = true;
-        this._isLoaded = true;
-        return;
-      }
-      const entitlementsUrl = `${getBaseUrl2(apiurl)}/organizations/${organizationid}/licensing/entitlements`;
-      console.debug(`[DAP Licensing] Fetching entitlements from: ${entitlementsUrl}`);
-      const headers = {
-        "Accept": "application/json"
-      };
-      if (adminJwt) {
-        headers["Authorization"] = `Bearer ${adminJwt}`;
-      }
-      try {
-        const response = await http(config, entitlementsUrl, {
-          method: "GET",
-          headers,
-          hostBase: typeof window !== "undefined" ? window.location.origin : "",
-          includeHostHeader: true
-        });
-        if (response) {
-          this.parseEntitlements(response);
-          this._isLoaded = true;
-          this._fallbackMode = false;
-          console.debug(`[DAP Licensing] Entitlements loaded successfully. Tier: ${this._tierKey}`);
-        } else {
-          throw new Error("Empty response from entitlements API");
-        }
-      } catch (err) {
-        console.warn(
-          `[DAP Licensing] Fetch failed, falling back to fail-open mode. Error: ${err?.message || err}`
-        );
-        this._fallbackMode = true;
-        this._isLoaded = true;
-      }
-    }
-    /**
-     * Parse features and limits from the API response defensively
-     */
-    parseEntitlements(data) {
-      if (!data) return;
-      this._tierKey = data.tierKey || data.tier || "unknown";
-      this._features = {};
-      const rawFeatures = data.features;
-      if (Array.isArray(rawFeatures)) {
-        rawFeatures.forEach((f) => {
-          if (f && typeof f.featureKey === "string") {
-            this._features[f.featureKey] = f.isEnabled !== void 0 ? !!f.isEnabled : true;
-          }
-        });
-      } else if (rawFeatures && typeof rawFeatures === "object") {
-        Object.keys(rawFeatures).forEach((key) => {
-          this._features[key] = !!rawFeatures[key];
-        });
-      }
-      this._limits = {};
-      const rawLimits = data.limits;
-      if (Array.isArray(rawLimits)) {
-        rawLimits.forEach((l) => {
-          if (l && typeof l.limitKey === "string") {
-            this._limits[l.limitKey] = {
-              limitKey: l.limitKey,
-              value: typeof l.value === "number" ? l.value : 0,
-              unit: l.unit || "count",
-              consumed: typeof l.consumed === "number" ? l.consumed : 0,
-              hardLimit: l.hardLimit !== void 0 ? !!l.hardLimit : !!l.hard_limit
-            };
-          }
-        });
-      } else if (rawLimits && typeof rawLimits === "object") {
-        Object.keys(rawLimits).forEach((key) => {
-          const item = rawLimits[key];
-          if (item && typeof item === "object") {
-            this._limits[key] = {
-              limitKey: key,
-              value: typeof item.value === "number" ? item.value : 0,
-              unit: item.unit || "count",
-              consumed: typeof item.consumed === "number" ? item.consumed : 0,
-              hardLimit: item.hardLimit !== void 0 ? !!item.hardLimit : !!item.hard_limit
-            };
-          } else if (typeof item === "number") {
-            this._limits[key] = {
-              limitKey: key,
-              value: item,
-              consumed: 0,
-              hardLimit: false
-            };
-          }
-        });
-      }
-    }
-    isFeatureEnabled(featureKey) {
-      if (this._fallbackMode) {
-        return true;
-      }
-      if (this._features[featureKey] !== void 0) {
-        return this._features[featureKey];
-      }
-      if (featureKey === "runtime_guidance") {
-        return true;
-      }
-      return false;
-    }
-    /**
-     * Check if a limit is exceeded (fail-open by default if fallback mode)
-     */
-    isLimitExceeded(limitKey, increment = 0) {
-      if (this._fallbackMode) {
-        return false;
-      }
-      const limit = this._limits[limitKey];
-      if (!limit) {
-        return false;
-      }
-      const currentConsumed = limit.consumed || 0;
-      const value = limit.value;
-      const isHard = !!limit.hardLimit;
-      if (isHard && currentConsumed + increment > value) {
-        console.warn(`[DAP Licensing] Quota exceeded for "${limitKey}". Limit: ${value}, Consumed: ${currentConsumed + increment}`);
-        return true;
-      }
-      return false;
-    }
-    /**
-     * Query licensing enforcement events from the backend (returns empty for player runtime).
-     * 
-     * NOTE: The enforcement-events endpoint requires JWT authentication (admin level).
-     * The player runtime does not fetch this endpoint. Enforcement events are logged
-     * by the backend during telemetry ingestion and are visible in admin dashboards only.
-     * 
-     * @returns Empty array (enforcement events are not visible at runtime)
-     */
-    async getEnforcementEvents() {
-      console.debug("[DAP Licensing] Player runtime does not fetch enforcement events. These are admin-visible only.");
-      return [];
-    }
-    /**
-     * Re-fetch licensing entitlements for the current organization.
-     * Requires the same admin JWT source used during init: config.adminJwt or window.__DAP_ADMIN_JWT__.
-     */
-    async refreshEntitlements() {
-      if (!this._config) throw new Error("[DAP Licensing] LicensingService is not configured");
-      await this.init(this._config);
-    }
-    /**
-     * Return a copy of the resolved feature entitlement map.
-     */
-    getLicenseFeatures() {
-      return { ...this._features };
-    }
-    /**
-     * Return a copy of the resolved quota/limit entitlement map.
-     */
-    getLicenseLimits() {
-      return { ...this._limits };
-    }
-    /**
-     * Get current licensing tier key.
-     */
-    getLicenseTier() {
-      return this._tierKey;
-    }
-    /**
-     * Get current debugging state
-     */
-    getDebugState() {
-      return {
-        isLoaded: this._isLoaded,
-        fallbackMode: this._fallbackMode,
-        tierKey: this._tierKey,
-        features: { ...this._features },
-        limits: { ...this._limits }
-      };
-    }
-  };
-  _LicensingService._instance = null;
-  var LicensingService = _LicensingService;
-  var licensingService = LicensingService.getInstance();
-
   // src/utils/previewMode.ts
   var PREVIEW_SESSION_STORAGE_KEY = "dap_preview_session_id";
   var PREVIEW_FLOW_ID_STORAGE_KEY = "dap_preview_flow_id";
@@ -15084,68 +14844,6 @@ var DAP = (function (exports) {
       return false;
     }
     /**
-     * Validate flow against licensing entitlements and limits
-     */
-    validateFlowLicensing(flowData) {
-      const previewMode = detectPreviewMode();
-      if (previewMode.isPreviewMode) {
-        if (!licensingService.isFeatureEnabled("flow_preview")) {
-          console.error(`[DAP] \u{1F6D1} Licensing Enforcement: EntitlementDenied - Feature "flow_preview" is not enabled.`);
-          this.triggerLicensingViolationEvent("EntitlementDenied", "flow_preview", "Feature 'flow_preview' is not enabled.");
-          return false;
-        }
-        return true;
-      }
-      if (!licensingService.isFeatureEnabled("runtime_guidance")) {
-        console.error(`[DAP] \u{1F6D1} Licensing Enforcement: EntitlementDenied - Feature "runtime_guidance" is not enabled.`);
-        this.triggerLicensingViolationEvent("EntitlementDenied", "runtime_guidance", "Feature 'runtime_guidance' is not enabled.");
-        return false;
-      }
-      const hasSurveyStep = flowData.steps?.some(
-        (step) => {
-          const type = step.uxExperience?.uxExperienceType || step.type || "";
-          return String(type).toLowerCase() === "survey";
-        }
-      );
-      if (hasSurveyStep && !licensingService.isFeatureEnabled("survey_insights")) {
-        console.error(`[DAP] \u{1F6D1} Licensing Enforcement: EntitlementDenied - Feature "survey_insights" is not enabled but flow contains survey steps.`);
-        this.triggerLicensingViolationEvent("EntitlementDenied", "survey_insights", "Feature 'survey_insights' is not enabled.");
-        return false;
-      }
-      if (licensingService.isLimitExceeded("max_flows_per_site")) {
-        console.error(`[DAP] \u{1F6D1} Licensing Enforcement: QuotaExceeded - Limit "max_flows_per_site" is exceeded.`);
-        this.triggerLicensingViolationEvent("QuotaExceeded", "max_flows_per_site", "Limit 'max_flows_per_site' is exceeded.");
-        return false;
-      }
-      return true;
-    }
-    triggerLicensingViolationEvent(eventType, targetKey, message) {
-      if (typeof window !== "undefined") {
-        window.dispatchEvent(
-          new CustomEvent("dap_licensing_enforcement", {
-            detail: {
-              eventType,
-              targetKey,
-              message
-            }
-          })
-        );
-      }
-      try {
-        telemetryService.track("licensing.enforcement", {
-          featureKey: targetKey,
-          classification: "Enforcement",
-          dimensions: {
-            eventType,
-            target: targetKey,
-            message
-          }
-        });
-      } catch (err) {
-        console.warn("[DAP] Failed to track licensing violation telemetry event:", err);
-      }
-    }
-    /**
      * Start a new flow
      */
     async startFlow(flowData) {
@@ -15184,11 +14882,6 @@ var DAP = (function (exports) {
       if (!this.validateFlowFrequency(flowData)) {
         console.debug(`[DAP] \u{1F6D1} Flow ${flowData.flowId} blocked by frequency validation`);
         this._onFlowEnd?.(flowData.flowId, "frequency_blocked");
-        return;
-      }
-      if (!this.validateFlowLicensing(flowData)) {
-        console.warn(`[DAP] \u{1F6D1} Flow ${flowData.flowId} blocked by licensing validation`);
-        this._onFlowEnd?.(flowData.flowId, "licensing_blocked");
         return;
       }
       this.analyzeTriggerUsage(flowData);
@@ -19448,13 +19141,6 @@ var DAP = (function (exports) {
         getFlowState: () => flowEngine.getState(),
         getManagedFlows: () => multiFlowOrchestrator.getManagedFlows(),
         getUserState: () => userContextService.getDebugState(),
-        isFeatureEnabled: (featureKey) => licensingService.isFeatureEnabled(featureKey),
-        getLicenseFeatures: () => licensingService.getLicenseFeatures(),
-        getLicenseLimits: () => licensingService.getLicenseLimits(),
-        getLicenseTier: () => licensingService.getLicenseTier(),
-        getLicensingState: () => licensingService.getDebugState(),
-        refreshLicensing: async () => licensingService.refreshEntitlements(),
-        getEnforcementEvents: () => licensingService.getEnforcementEvents(),
         testFlow: async (flowId) => {
           if (!_dapConfig) throw new Error("SDK not initialized");
           const previewMode2 = detectPreviewMode();
@@ -19502,18 +19188,10 @@ var DAP = (function (exports) {
     if (!configUrl) throw new Error("DAP.init: configUrl is required");
     const pathname = location.pathname.replace(/^\/+/, "");
     let cfg = await loadConfig(configUrl);
-    if (opts?.adminJwt) {
-      cfg = { ...cfg, adminJwt: opts.adminJwt };
-    }
     const hostBase = location.origin;
     window.__DAP_CONFIG__ = cfg;
     _dapConfig = cfg;
     telemetryService.setConfig(cfg);
-    try {
-      await licensingService.init(cfg);
-    } catch (err) {
-      console.error("[DAP] Licensing initialization failed:", err);
-    }
     if (user) {
       userContextService.setUser(user);
       const resolvedUser = userContextService.getUser();
@@ -19959,12 +19637,6 @@ var DAP = (function (exports) {
     registerFlow,
     startFlow,
     executeFlow,
-    refreshLicensing: async () => licensingService.refreshEntitlements(),
-    isFeatureEnabled: (featureKey) => licensingService.isFeatureEnabled(featureKey),
-    getLicenseFeatures: () => licensingService.getLicenseFeatures(),
-    getLicenseLimits: () => licensingService.getLicenseLimits(),
-    getLicenseTier: () => licensingService.getLicenseTier(),
-    getLicensingState: () => licensingService.getDebugState(),
     resetFlowRuns
   };
   if (typeof window !== "undefined") {
