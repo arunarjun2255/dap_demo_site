@@ -13190,9 +13190,10 @@ var DAP = (function (exports) {
           console.debug("[DAP Licensing] Could not read token from browser storage:", e);
         }
       }
-      if (!adminJwt) {
+      const hasApiKey = !!config.apikey;
+      if (!adminJwt && !hasApiKey) {
         console.debug(
-          "[DAP Licensing] Player runtime initialized in fail-open mode. To fetch entitlements for testing, log in or set window.__DAP_ADMIN_JWT__."
+          "[DAP Licensing] Player runtime initialized in fail-open mode. No JWT or API Key provided."
         );
         this._fallbackMode = true;
         this._isLoaded = true;
@@ -13201,9 +13202,11 @@ var DAP = (function (exports) {
       const entitlementsUrl = `${getBaseUrl2(apiurl)}/organizations/${organizationid}/licensing/entitlements`;
       console.debug(`[DAP Licensing] Fetching entitlements from: ${entitlementsUrl}`);
       const headers = {
-        "Accept": "application/json",
-        "Authorization": `Bearer ${adminJwt}`
+        "Accept": "application/json"
       };
+      if (adminJwt) {
+        headers["Authorization"] = `Bearer ${adminJwt}`;
+      }
       try {
         const response = await http(config, entitlementsUrl, {
           method: "GET",
