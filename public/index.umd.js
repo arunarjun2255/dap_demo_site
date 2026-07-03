@@ -13132,7 +13132,12 @@ var DAP = (function (exports) {
 
   // src/services/licensingService.ts
   function getBaseUrl2(apiurl) {
-    const base = apiurl.replace(/\/$/, "");
+    let base = apiurl.replace(/\/$/, "");
+    if (base === "/api" || base.startsWith("/")) {
+      if (typeof window !== "undefined" && (window.location.hostname.includes("vercel.app") || window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")) {
+        base = "https://cogniorbackend-v1.azurewebsites.net/api";
+      }
+    }
     if (base.endsWith("/api/v1")) {
       return base;
     }
