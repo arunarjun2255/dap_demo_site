@@ -13132,12 +13132,7 @@ var DAP = (function (exports) {
 
   // src/services/licensingService.ts
   function getBaseUrl2(apiurl) {
-    let base = apiurl.replace(/\/$/, "");
-    if (base === "/api" || base.startsWith("/")) {
-      if (typeof window !== "undefined" && (window.location.hostname.includes("vercel.app") || window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")) {
-        base = "https://cogniorbackend-v1.azurewebsites.net/api";
-      }
-    }
+    const base = apiurl.replace(/\/$/, "");
     if (base.endsWith("/api/v1")) {
       return base;
     }
@@ -13188,27 +13183,18 @@ var DAP = (function (exports) {
         return;
       }
       let adminJwt = config.adminJwt || (typeof window !== "undefined" ? window.__DAP_ADMIN_JWT__ : void 0);
-      if (!adminJwt && typeof window !== "undefined") {
+      if (!adminJwt && !config.apikey && typeof window !== "undefined") {
         try {
-          if (typeof window.getStorageItem === "function") {
-            let res = window.getStorageItem("accessToken");
-            if (res && typeof res.then === "function") {
-              res = await res;
-            }
-            if (!res) {
-              res = window.getStorageItem("token");
-              if (res && typeof res.then === "function") {
-                res = await res;
-              }
-            }
-            adminJwt = res;
-          }
-          if (!adminJwt) {
-            adminJwt = localStorage.getItem("accessToken") || sessionStorage.getItem("accessToken") || localStorage.getItem("token") || sessionStorage.getItem("token");
-          }
+          adminJwt = localStorage.getItem("accessToken") || sessionStorage.getItem("accessToken") || localStorage.getItem("token") || sessionStorage.getItem("token");
         } catch (e) {
           console.debug("[DAP Licensing] Could not read token from browser storage:", e);
         }
+      }
+      if (!adminJwt && !config.apikey) {
+        console.debug("[DAP Licensing] Player runtime initialized in fail-open mode. To fetch entitlements for testing, log in, set config.apikey, or set window.__DAP_ADMIN_JWT__.");
+        this._fallbackMode = true;
+        this._isLoaded = true;
+        return;
       }
       const entitlementsUrl = `${getBaseUrl2(apiurl)}/organizations/${organizationid}/licensing/entitlements`;
       console.debug(`[DAP Licensing] Fetching entitlements from: ${entitlementsUrl}`);
@@ -13222,7 +13208,7 @@ var DAP = (function (exports) {
         const response = await http(config, entitlementsUrl, {
           method: "GET",
           headers,
-          hostBase: typeof window !== "undefined" ? window.location.hostname : "",
+          hostBase: typeof window !== "undefined" ? window.location.origin : "",
           includeHostHeader: true
         });
         if (response) {
