@@ -13228,7 +13228,7 @@ var DAP = (function (exports) {
               value: typeof l.value === "number" ? l.value : typeof l.allowed === "number" ? l.allowed : 0,
               unit: l.unit || "count",
               consumed: typeof l.consumed === "number" ? l.consumed : 0,
-              hardLimit: l.hardLimit !== void 0 ? !!l.hardLimit : !!l.hard_limit
+              hardLimit: l.hardLimit !== void 0 ? !!l.hardLimit : l.hard_limit !== void 0 ? !!l.hard_limit : true
             };
           }
         });
@@ -13241,7 +13241,7 @@ var DAP = (function (exports) {
               value: typeof item.value === "number" ? item.value : typeof item.allowed === "number" ? item.allowed : 0,
               unit: item.unit || "count",
               consumed: typeof item.consumed === "number" ? item.consumed : 0,
-              hardLimit: item.hardLimit !== void 0 ? !!item.hardLimit : !!item.hard_limit
+              hardLimit: item.hardLimit !== void 0 ? !!item.hardLimit : item.hard_limit !== void 0 ? !!item.hard_limit : true
             };
           } else if (typeof item === "number") {
             this._limits[key] = {
