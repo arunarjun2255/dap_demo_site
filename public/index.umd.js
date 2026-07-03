@@ -80,6 +80,7 @@ var DAP = (function (exports) {
       siteid: j.siteid || j.siteId || j.siteCollectionId || "",
       apikey: j.apikey || j.apiKey || "",
       apiurl: j.apiurl || j.apiUrl || "",
+      adminJwt: j.adminJwt || j.admin_jwt || "",
       enableDraggableModals: j.enableDraggableModals !== void 0 ? j.enableDraggableModals : j.enable_draggable_modals
     };
   }
@@ -19498,7 +19499,10 @@ var DAP = (function (exports) {
     }
     if (!configUrl) throw new Error("DAP.init: configUrl is required");
     const pathname = location.pathname.replace(/^\/+/, "");
-    const cfg = await loadConfig(configUrl);
+    let cfg = await loadConfig(configUrl);
+    if (opts?.adminJwt) {
+      cfg = { ...cfg, adminJwt: opts.adminJwt };
+    }
     const hostBase = location.origin;
     window.__DAP_CONFIG__ = cfg;
     _dapConfig = cfg;
