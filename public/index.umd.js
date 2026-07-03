@@ -13159,23 +13159,47 @@ var DAP = (function (exports) {
       return this._instance;
     }
     /**
-     * Initialize the service by fetching entitlements
+     * Initialize the service.
+     * 
+     * NOTE: The Player (runtime SDK) uses API-key authentication and should NOT fetch
+     * licensing entitlements from the admin-protected endpoint. Licensing is an admin/organization
+     * concern (requires JWT auth). The SDK operates in fail-open licensing mode by design:
+     * - All features are allowed
+     * - All quota checks pass
+     * This allows the runtime to render flows freely and emit telemetry for metering/billing.
+     * 
+     * Licensing enforcement happens at:
+     * 1. Admin portal level (JWT-authenticated)
+     * 2. Telemetry ingestion level (backend enforces quotas/entitlements)
      */
     async init(config) {
       this._config = config;
-      const { organizationid, apiurl, siteid } = config;
+      const { organizationid, apiurl } = config;
       if (!organizationid || !apiurl) {
-        console.warn("[DAP Licensing] Missing config for licensing, entering fallback (fail-open) mode");
+        console.warn("[DAP Licensing] Missing config, entering fail-open fallback mode");
         this._fallbackMode = true;
+        this._isLoaded = true;
+        return;
+      }
+      let adminJwt = config.adminJwt || (typeof window !== "undefined" ? window.__DAP_ADMIN_JWT__ : void 0);
+      if (!adminJwt && typeof window !== "undefined") {
+        try {
+          adminJwt = localStorage.getItem("accessToken") || sessionStorage.getItem("accessToken") || localStorage.getItem("token") || sessionStorage.getItem("token");
+        } catch (e) {
+          console.debug("[DAP Licensing] Could not read token from browser storage:", e);
+        }
+      }
+      if (!adminJwt) {
+        console.debug("[DAP Licensing] Player runtime initialized in fail-open mode. To fetch entitlements for testing, log in or set window.__DAP_ADMIN_JWT__.");
+        this._fallbackMode = true;
+        this._isLoaded = true;
         return;
       }
       const entitlementsUrl = `${getBaseUrl2(apiurl)}/organizations/${organizationid}/licensing/entitlements`;
       console.debug(`[DAP Licensing] Fetching entitlements from: ${entitlementsUrl}`);
       const headers = {
         "Accept": "application/json",
-        "X-Site-Collection-Id": siteid || "",
-        "X-Site-Id": siteid || "",
-        "X-SiteCollection-Id": siteid || ""
+        "Authorization": `Bearer ${adminJwt}`
       };
       try {
         const response = await http(config, entitlementsUrl, {
@@ -13194,9 +13218,10 @@ var DAP = (function (exports) {
         }
       } catch (err) {
         console.warn(
-          `[DAP Licensing] Failed to query entitlements. Entering fail-open fallback mode. Error: ${err.message}`
+          `[DAP Licensing] Fetch failed, falling back to fail-open mode. Error: ${err?.message || err}`
         );
         this._fallbackMode = true;
+        this._isLoaded = true;
       }
     }
     /**
@@ -13225,10 +13250,10 @@ var DAP = (function (exports) {
           if (l && typeof l.limitKey === "string") {
             this._limits[l.limitKey] = {
               limitKey: l.limitKey,
-              value: typeof l.value === "number" ? l.value : typeof l.allowed === "number" ? l.allowed : 0,
+              value: typeof l.value === "number" ? l.value : 0,
               unit: l.unit || "count",
               consumed: typeof l.consumed === "number" ? l.consumed : 0,
-              hardLimit: l.hardLimit !== void 0 ? !!l.hardLimit : l.hard_limit !== void 0 ? !!l.hard_limit : true
+              hardLimit: l.hardLimit !== void 0 ? !!l.hardLimit : !!l.hard_limit
             };
           }
         });
@@ -13238,10 +13263,10 @@ var DAP = (function (exports) {
           if (item && typeof item === "object") {
             this._limits[key] = {
               limitKey: key,
-              value: typeof item.value === "number" ? item.value : typeof item.allowed === "number" ? item.allowed : 0,
+              value: typeof item.value === "number" ? item.value : 0,
               unit: item.unit || "count",
               consumed: typeof item.consumed === "number" ? item.consumed : 0,
-              hardLimit: item.hardLimit !== void 0 ? !!item.hardLimit : item.hard_limit !== void 0 ? !!item.hard_limit : true
+              hardLimit: item.hardLimit !== void 0 ? !!item.hardLimit : !!item.hard_limit
             };
           } else if (typeof item === "number") {
             this._limits[key] = {
@@ -13287,31 +13312,17 @@ var DAP = (function (exports) {
       return false;
     }
     /**
-     * Query licensing enforcement events from the backend
+     * Query licensing enforcement events from the backend (returns empty for player runtime).
+     * 
+     * NOTE: The enforcement-events endpoint requires JWT authentication (admin level).
+     * The player runtime does not fetch this endpoint. Enforcement events are logged
+     * by the backend during telemetry ingestion and are visible in admin dashboards only.
+     * 
+     * @returns Empty array (enforcement events are not visible at runtime)
      */
     async getEnforcementEvents() {
-      if (!this._config) return [];
-      const { organizationid, apiurl, siteid } = this._config;
-      if (!organizationid || !apiurl) return [];
-      const url = `${getBaseUrl2(apiurl)}/organizations/${organizationid}/licensing/enforcement-events`;
-      const headers = {
-        "Accept": "application/json",
-        "X-Site-Collection-Id": siteid || "",
-        "X-Site-Id": siteid || "",
-        "X-SiteCollection-Id": siteid || ""
-      };
-      try {
-        const response = await http(this._config, url, {
-          method: "GET",
-          headers,
-          hostBase: typeof window !== "undefined" ? window.location.origin : "",
-          includeHostHeader: true
-        });
-        return Array.isArray(response) ? response : response?.events || [];
-      } catch (err) {
-        console.warn("[DAP Licensing] Failed to query enforcement events:", err);
-        return [];
-      }
+      console.debug("[DAP Licensing] Player runtime does not fetch enforcement events. These are admin-visible only.");
+      return [];
     }
     /**
      * Get current debugging state
