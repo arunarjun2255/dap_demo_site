@@ -107,10 +107,14 @@ var DAP = (function (exports) {
   // src/http.ts
   async function http(cfg, path, opts = {}) {
     const method = (opts.method || "GET").toUpperCase();
+    const isEntitlements = path.includes("/licensing/entitlements");
     const headers = {
       "X-Api-Key": cfg.apikey,
-      "X-Organization-Id": cfg.organizationid,
-      "X-Site-Id": cfg.siteid,
+      "X-API-KEY": cfg.apikey,
+      ...isEntitlements ? {} : {
+        "X-Organization-Id": cfg.organizationid,
+        "X-Site-Id": cfg.siteid
+      },
       ...opts.includeHostHeader && opts.hostBase ? { "X-Host-Url": opts.hostBase } : {},
       ...opts.headers || {}
     };
