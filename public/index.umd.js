@@ -80,8 +80,7 @@ var DAP = (function (exports) {
       siteid: j.siteid || j.siteId || j.siteCollectionId || "",
       apikey: j.apikey || j.apiKey || "",
       apiurl: j.apiurl || j.apiUrl || "",
-      enableDraggableModals: j.enableDraggableModals !== void 0 ? j.enableDraggableModals : j.enable_draggable_modals,
-      adminJwt: j.adminJwt || j.admin_jwt
+      enableDraggableModals: j.enableDraggableModals !== void 0 ? j.enableDraggableModals : j.enable_draggable_modals
     };
   }
   function validateConfig(j) {
@@ -13183,17 +13182,15 @@ var DAP = (function (exports) {
         return;
       }
       let adminJwt = config.adminJwt || (typeof window !== "undefined" ? window.__DAP_ADMIN_JWT__ : void 0);
-      if (!adminJwt && typeof window !== "undefined") {
+      if (!adminJwt && !config.apikey && typeof window !== "undefined") {
         try {
-          adminJwt = localStorage.getItem("dap_admin_jwt") || sessionStorage.getItem("dap_admin_jwt") || void 0;
+          adminJwt = localStorage.getItem("accessToken") || sessionStorage.getItem("accessToken") || localStorage.getItem("token") || sessionStorage.getItem("token");
         } catch (e) {
           console.debug("[DAP Licensing] Could not read token from browser storage:", e);
         }
       }
       if (!adminJwt) {
-        console.debug(
-          "[DAP Licensing] Player runtime initialized in fail-open mode. To fetch entitlements for testing, log in or set window.__DAP_ADMIN_JWT__."
-        );
+        console.debug("[DAP Licensing] Player runtime initialized in fail-open mode. To fetch entitlements for testing, log in or set window.__DAP_ADMIN_JWT__.");
         this._fallbackMode = true;
         this._isLoaded = true;
         return;
