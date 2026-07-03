@@ -80,8 +80,7 @@ var DAP = (function (exports) {
       siteid: j.siteid || j.siteId || j.siteCollectionId || "",
       apikey: j.apikey || j.apiKey || "",
       apiurl: j.apiurl || j.apiUrl || "",
-      enableDraggableModals: j.enableDraggableModals !== void 0 ? j.enableDraggableModals : j.enable_draggable_modals,
-      adminJwt: j.adminJwt || j.admin_jwt
+      enableDraggableModals: j.enableDraggableModals !== void 0 ? j.enableDraggableModals : j.enable_draggable_modals
     };
   }
   function validateConfig(j) {
@@ -12742,9 +12741,6 @@ var DAP = (function (exports) {
       if (config?.debug || window.__DAP_DEBUG__) {
         console.debug(`[DAP Telemetry] Queued event: ${eventName}`, event);
       }
-      this.flush().catch((err) => {
-        console.warn("[DAP Telemetry] Flush failed in track:", err);
-      });
     }
     /**
      * Send a player telemetry event (retains backward compatibility).
@@ -13182,17 +13178,25 @@ var DAP = (function (exports) {
       if (!organizationid || !apiurl) {
         console.warn("[DAP Licensing] Missing config, entering fail-open fallback mode");
         this._fallbackMode = true;
+        this._isLoaded = true;
         return;
       }
-      const adminJwt = config.adminJwt || (typeof window !== "undefined" ? window.__DAP_ADMIN_JWT__ : void 0);
+      let adminJwt = config.adminJwt || (typeof window !== "undefined" ? window.__DAP_ADMIN_JWT__ : void 0);
+      if (!adminJwt && !config.apikey && typeof window !== "undefined") {
+        try {
+          adminJwt = localStorage.getItem("accessToken") || sessionStorage.getItem("accessToken") || localStorage.getItem("token") || sessionStorage.getItem("token");
+        } catch (e) {
+          console.debug("[DAP Licensing] Could not read token from browser storage:", e);
+        }
+      }
       if (!adminJwt) {
-        console.debug("[DAP Licensing] Player runtime initialized in fail-open mode. To fetch entitlements for testing, set config.adminJwt or window.__DAP_ADMIN_JWT__.");
+        console.debug("[DAP Licensing] Player runtime initialized in fail-open mode. To fetch entitlements for testing, log in or set window.__DAP_ADMIN_JWT__.");
         this._fallbackMode = true;
         this._isLoaded = true;
         return;
       }
       const entitlementsUrl = `${getBaseUrl2(apiurl)}/organizations/${organizationid}/licensing/entitlements`;
-      console.debug(`[DAP Licensing] Dev-mode: Fetching entitlements from: ${entitlementsUrl}`);
+      console.debug(`[DAP Licensing] Fetching entitlements from: ${entitlementsUrl}`);
       const headers = {
         "Accept": "application/json",
         "Authorization": `Bearer ${adminJwt}`
@@ -13214,7 +13218,7 @@ var DAP = (function (exports) {
         }
       } catch (err) {
         console.warn(
-          `[DAP Licensing] Dev-mode fetch failed, falling back to fail-open mode. Error: ${err?.message || err}`
+          `[DAP Licensing] Fetch failed, falling back to fail-open mode. Error: ${err?.message || err}`
         );
         this._fallbackMode = true;
         this._isLoaded = true;
@@ -13275,14 +13279,17 @@ var DAP = (function (exports) {
         });
       }
     }
-    /**
-     * Check if a feature is enabled (fail-open by default if fallback mode)
-     */
     isFeatureEnabled(featureKey) {
       if (this._fallbackMode) {
         return true;
       }
-      return this._features[featureKey] !== void 0 ? this._features[featureKey] : true;
+      if (this._features[featureKey] !== void 0) {
+        return this._features[featureKey];
+      }
+      if (featureKey === "runtime_guidance") {
+        return true;
+      }
+      return false;
     }
     /**
      * Check if a limit is exceeded (fail-open by default if fallback mode)
