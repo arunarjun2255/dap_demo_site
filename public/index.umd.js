@@ -590,11 +590,7 @@ var DAP = (function (exports) {
     }
   }
   function getBaseUrl(apiurl) {
-    const base = (apiurl || "").replace(/\/+$/, "");
-    if (base.endsWith("/api/v1")) return base;
-    if (base.endsWith("/api")) return base + "/v1";
-    if (base.endsWith("/v1")) return base;
-    return base + "/api/v1";
+    return (apiurl || "").replace(/\/+$/, "");
   }
   function joinUrl(base, tail) {
     const b = (base || "").replace(/\/+$/, "");
@@ -8491,11 +8487,7 @@ var DAP = (function (exports) {
     };
   }
   function getBaseUrl2(apiurl) {
-    const base = (apiurl || "").replace(/\/+$/, "");
-    if (base.endsWith("/api/v1")) return base;
-    if (base.endsWith("/api")) return base + "/v1";
-    if (base.endsWith("/v1")) return base;
-    return base + "/api/v1";
+    return (apiurl || "").replace(/\/+$/, "");
   }
 
   // src/experiences/popover.ts
@@ -12530,17 +12522,7 @@ var DAP = (function (exports) {
 
   // src/services/telemetryService.ts
   function getBaseUrl3(apiurl) {
-    const base = apiurl.replace(/\/$/, "");
-    if (base.endsWith("/api/v1")) {
-      return base;
-    }
-    if (base.endsWith("/api")) {
-      return base + "/v1";
-    }
-    if (base.endsWith("/v1")) {
-      return base;
-    }
-    return base + "/api/v1";
+    return (apiurl || "").replace(/\/+$/, "");
   }
   function generateUlid() {
     const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
