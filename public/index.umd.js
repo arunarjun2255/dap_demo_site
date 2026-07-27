@@ -123,7 +123,7 @@ var DAP = (function (exports) {
     const t = setTimeout(() => c.abort(), opts.timeoutMs ?? 15e3);
     let res;
     try {
-      res = await fetch(url, { method, headers, body: bodyInit, signal: c.signal, credentials: "omit", cache: "no-cache" });
+      res = await fetch(url, { method, headers, body: bodyInit, signal: c.signal, credentials: "omit", cache: "no-cache", mode: "cors" });
     } catch (err) {
       clearTimeout(t);
       throw err;
@@ -574,7 +574,7 @@ var DAP = (function (exports) {
   }
   async function checkCorsAccess(cfg, hostBase) {
     const apiBase = getBaseUrl(cfg.apiurl);
-    const url = joinUrl(apiBase, "cors-check") + `?organizationId=${encodeURIComponent(cfg.organizationid)}&siteCollectionId=${encodeURIComponent(cfg.siteid)}`;
+    const url = joinUrl(apiBase, "cors-check") + `?organizationId=${encodeURIComponent(cfg.organizationid)}&siteCollectionId=${encodeURIComponent(cfg.siteid)}&origin=${encodeURIComponent(hostBase)}&hostUrl=${encodeURIComponent(hostBase)}`;
     try {
       const res = await http(cfg, url, {
         method: "GET",
@@ -583,7 +583,7 @@ var DAP = (function (exports) {
       });
       return res?.allowed === true;
     } catch (e) {
-      if (e?.status === 403) {
+      if (e?.status === 403 || e?.status === 401 || e instanceof TypeError || e?.name === "TypeError" || !e?.status) {
         return false;
       }
       throw e;
@@ -19189,7 +19189,7 @@ var DAP = (function (exports) {
     }
     if (!_corsCheckPassed) {
       console.error(
-        "[DAP] CORS check failed: origin not allowed for this site collection. SDK initialization aborted. Verify that this domain is registered under the site collection DomainNames."
+        `[DAP] CORS check failed: origin '${location.origin}' is not allowed for this site collection. SDK initialization aborted. Verify that this domain is registered under the site collection DomainNames.`
       );
       return;
     }
