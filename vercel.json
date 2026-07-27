@@ -1,6 +1,6 @@
 {
   "rewrites": [
-    { "source": "/api/:path*", "destination": "https://cogniorbackend-v1.azurewebsites.net/api/:path*" },
+    { "source": "/api/:path*", "destination": "https://iap-api-dev.cognior.com/api/:path*" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
