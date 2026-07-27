@@ -499,7 +499,7 @@ var DAP = (function (exports) {
     };
     var flowCache = new FlowCache();
     async function fetchVisibleFlowIds(cfg, hostBase, page) {
-        const base = joinUrl(cfg.apiurl, `/iap-experience/organizations/${cfg.organizationid}/site-collections/${cfg.siteid}/visible-userflows`);
+        const base = joinUrl(cfg.apiurl, `/iap-experience/${cfg.organizationid}/${cfg.siteid}/visible-flows`);
         try {
             const res = await http(cfg, base, {
                 method: "POST",
@@ -533,15 +533,11 @@ var DAP = (function (exports) {
             console.debug(`[DAP] Flow ${flowId} found in cache, using cached version`);
             return cachedFlow;
         }
-        const baseUrl = joinUrl(cfg.apiurl, `/iap-experience/organizations/${cfg.organizationid}/site-collections/${cfg.siteid}/userflows/${flowId}`);
+        const baseUrl = joinUrl(cfg.apiurl, `/iap-experience/${cfg.organizationid}/${cfg.siteid}/flows/${flowId}`);
         const url = previewSessionId ? `${baseUrl}?previewSessionId=${encodeURIComponent(previewSessionId)}` : baseUrl;
         console.debug(`[DAP] Fetching flow ${flowId} from URL: ${url}`);
         try {
-            const flowData = await http(cfg, url, {
-                method: "GET",
-                hostBase,
-                includeHostHeader: true
-            });
+            const flowData = await http(cfg, url, { method: "GET", hostBase, includeHostHeader: true });
             console.debug(`[DAP] Successfully fetched flow ${flowId} from current site, caching it`);
             flowCache.set(flowId, flowData);
             return flowData;
@@ -7480,7 +7476,7 @@ var DAP = (function (exports) {
                 console.debug("[DAP] Survey submission payload:", submissionData);
                 if (flow.config && payload.flowId && payload.organizationId && payload.siteId) {
                     const baseUrl = flow.config.apiurl.replace(/\/$/, "");
-                    const url = `${baseUrl}/iap-experience/organizations/${payload.organizationId}/site-collections/${payload.siteId}/userflows/${payload.flowId}/survey-responses`;
+                    const url = `${baseUrl}/iap-experience/${payload.organizationId}/${payload.siteId}/survey-responses/${payload.flowId}`;
                     const hostBase = location.origin;
                     console.debug("[DAP] Submitting survey to API:", url);
                     try {
@@ -7958,7 +7954,7 @@ var DAP = (function (exports) {
         console.debug("[DAP] MicroSurvey submission payload:", submissionData);
         if (flow.config && payload.flowId && payload.organizationId && payload.siteId) {
             const baseUrl = flow.config.apiurl.replace(/\/$/, "");
-            const url = `${baseUrl}/iap-experience/organizations/${payload.organizationId}/site-collections/${payload.siteId}/userflows/${payload.flowId}/survey-responses`;
+            const url = `${baseUrl}/iap-experience/${payload.organizationId}/${payload.siteId}/survey-responses/${payload.flowId}`;
             const hostBase = location.origin;
             console.debug("[DAP] Submitting micro survey to API:", url);
             await http(flow.config, url, {
@@ -12509,455 +12505,6 @@ var DAP = (function (exports) {
     };
     LocationContextService.getInstance();
 
-    // src/services/telemetryService.ts
-    function getBaseUrl(apiurl) {
-        const base = apiurl.replace(/\/$/, "");
-        if (base.endsWith("/api/v1")) {
-            return base;
-        }
-        if (base.endsWith("/api")) {
-            return base + "/v1";
-        }
-        if (base.endsWith("/v1")) {
-            return base;
-        }
-        return base + "/api/v1";
-    }
-    function generateUlid() {
-        const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-        let now = Date.now();
-        let timeStr = "";
-        for (let i = 0; i < 10; i++) {
-            const mod = now % 32;
-            timeStr = alphabet[mod] + timeStr;
-            now = Math.floor(now / 32);
-        }
-        let randStr = "";
-        for (let i = 0; i < 16; i++) {
-            const rand = Math.floor(Math.random() * 32);
-            randStr += alphabet[rand];
-        }
-        return timeStr + randStr;
-    }
-    function generateUuid() {
-        return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-            const r = Math.random() * 16 | 0;
-            const v = c === "x" ? r : r & 3 | 8;
-            return v.toString(16);
-        });
-    }
-    function getBrowserName() {
-        if (typeof navigator === "undefined") return "Unknown";
-        const ua = navigator.userAgent;
-        if (ua.indexOf("Chrome") > -1) {
-            if (ua.indexOf("Edg") > -1) return "Edge";
-            return "Chrome";
-        }
-        if (ua.indexOf("Safari") > -1) return "Safari";
-        if (ua.indexOf("Firefox") > -1) return "Firefox";
-        if (ua.indexOf("MSIE") > -1 || ua.indexOf("Trident") > -1) return "IE";
-        return "Unknown";
-    }
-    var _TelemetryService = class _TelemetryService {
-        constructor() {
-            this._config = null;
-            this._sessionId = null;
-            this._isInitialized = false;
-            this._inMemoryQueue = [];
-            this._intervalId = null;
-            this._isFlushing = false;
-            this._pendingEvents = [];
-            this.STORAGE_KEY = "dap_telemetry_event_queue";
-            this.SESSION_ID_KEY = "dap_player_session_id";
-            this.BATCH_INTERVAL_MS = 6e4;
-            this.initializeSession();
-        }
-        static getInstance() {
-            if (!this._instance) {
-                this._instance = new _TelemetryService();
-            }
-            return this._instance;
-        }
-        /**
-         * Set configuration and initialize background services
-         */
-        setConfig(config) {
-            this._config = config;
-            if (!this._isInitialized) {
-                this.initializeService();
-            }
-        }
-        /**
-         * Initialize or retrieve the session ID
-         */
-        initializeSession() {
-            try {
-                if (typeof sessionStorage !== "undefined") {
-                    let stored = sessionStorage.getItem(this.SESSION_ID_KEY);
-                    if (!stored) {
-                        stored = `sess_runtime_${generateUuid().replace(/-/g, "")}`;
-                        sessionStorage.setItem(this.SESSION_ID_KEY, stored);
-                    }
-                    this._sessionId = stored;
-                } else {
-                    this._sessionId = `sess_runtime_${generateUuid().replace(/-/g, "")}`;
-                }
-            } catch {
-                this._sessionId = `sess_runtime_${generateUuid().replace(/-/g, "")}`;
-            }
-        }
-        /**
-         * Get the current session ID
-         */
-        getSessionId() {
-            if (!this._sessionId) {
-                this.initializeSession();
-            }
-            return this._sessionId;
-        }
-        /**
-         * Initialize the service, loads storage queue, runs interval flusher
-         */
-        initializeService() {
-            try {
-                if (typeof localStorage !== "undefined") {
-                    const stored = localStorage.getItem(this.STORAGE_KEY);
-                    if (stored) {
-                        this._inMemoryQueue = JSON.parse(stored);
-                        console.debug(`[DAP Telemetry] Loaded ${this._inMemoryQueue.length} events from storage.`);
-                    }
-                }
-            } catch (e) {
-                console.warn("[DAP Telemetry] Failed to load queue from storage:", e);
-                this._inMemoryQueue = [];
-            }
-            this.initializeSession();
-            this.startInterval();
-            if (typeof window !== "undefined") {
-                const unloadHandler = () => {
-                    this.flushSync();
-                };
-                window.addEventListener("beforeunload", unloadHandler);
-                window.addEventListener("pagehide", unloadHandler);
-            }
-            this._isInitialized = true;
-            if (this._pendingEvents.length > 0) {
-                console.debug(`[DAP Telemetry] Draining ${this._pendingEvents.length} pending events...`);
-                this._pendingEvents.forEach((e) => {
-                    this.track(e.eventName, e.payload);
-                });
-                this._pendingEvents = [];
-            }
-            this.flush().catch((err) => console.error("[DAP Telemetry] Failed to flush telemetry on startup:", err));
-        }
-        /**
-         * Tracks a telemetry event with proper metering dimensions.
-         * 
-         * Event structure follows the v1 telemetry ingestion spec:
-         * - moduleKey: "player" (runtime SDK)
-         * - eventName: stable event identifier (e.g., 'flow.launched', 'feature.used')
-         * - billingDimension: one of EventsIngested, ConsumerSessions, BusinessActiveUsers, etc.
-         * - classification: 0=Billable, 1=Informational, 2=Rejected
-         * 
-         * @param eventName Name of the event (e.g. 'feature.used', 'flow.launched')
-         * @param payload Custom properties including dimensions.billingDimension for metering
-         */
-        track(eventName, payload = {}) {
-            if (!this._isInitialized) {
-                this._pendingEvents.push({ eventName, payload });
-                return;
-            }
-            const timestamp = Date.now();
-            const occurredAtUtc = new Date(timestamp).toISOString();
-            const sanitizedEventName = eventName.toLowerCase().replace(/[^a-z0-9_]/g, "_");
-            const ulid = generateUlid();
-            const eventId = `evt_player_${sanitizedEventName}_${ulid}`;
-            const config = this._config || window.__DAP_CONFIG__;
-            const orgId = config?.organizationid || payload.organizationId || null;
-            let userId = null;
-            try {
-                const analyticsContext = userContextService.getAnalyticsContext();
-                userId = analyticsContext?.userId || payload.userId || null;
-            } catch {
-                userId = payload.userId || null;
-            }
-            if (userId && !userId.startsWith("usr_runtime_")) {
-                userId = `usr_runtime_${userId}`;
-            }
-            const siteCollectionId = config?.siteid || payload.siteCollectionId || null;
-            const rawDimensions = {
-                billingDimension: payload.dimensions?.billingDimension || payload.billingDimension || "EventsIngested",
-                featureKey: payload.dimensions?.featureKey || payload.featureKey || "runtime_guidance",
-                pageUrl: payload.dimensions?.pageUrl || (typeof window !== "undefined" ? window.location.href : ""),
-                host: payload.dimensions?.host || (typeof window !== "undefined" ? window.location.host : ""),
-                browser: getBrowserName(),
-                ...payload.dimensions
-            };
-            const dimensions = {};
-            for (const key of Object.keys(rawDimensions)) {
-                const val = rawDimensions[key];
-                if (val !== null && val !== void 0) {
-                    if (Array.isArray(val)) {
-                        dimensions[key] = val.join(", ");
-                    } else if (typeof val === "object") {
-                        dimensions[key] = JSON.stringify(val);
-                    } else {
-                        dimensions[key] = String(val);
-                    }
-                }
-            }
-            const event = {
-                eventId,
-                moduleKey: "player",
-                eventName,
-                featureKey: payload.featureKey || dimensions.featureKey || "runtime_guidance",
-                sessionId: this.getSessionId(),
-                userId,
-                siteCollectionId,
-                quantity: typeof payload.quantity === "number" ? payload.quantity : 1,
-                unit: payload.unit || "count",
-                occurredAtUtc,
-                classification: (() => {
-                    const rawClass = payload.classification || "Billable";
-                    if (typeof rawClass === "number") return rawClass;
-                    const lower = String(rawClass).toLowerCase();
-                    if (lower === "nonbillable" || lower === "non_billable" || lower === "non-billable") return 1;
-                    if (lower === "enforcement") return 2;
-                    return 0;
-                })(),
-                dimensions
-            };
-            const queueRecord = {
-                id: eventId,
-                orgId,
-                event,
-                retryCount: 0,
-                queuedAt: timestamp
-            };
-            this._inMemoryQueue.push(queueRecord);
-            this.saveQueue(this._inMemoryQueue);
-            if (config?.debug || window.__DAP_DEBUG__) {
-                console.debug(`[DAP Telemetry] Queued event: ${eventName}`, event);
-            }
-        }
-        /**
-         * Send a player telemetry event (retains backward compatibility).
-         * 
-         * Maps runtime events to proper metering billing dimensions per v1 spec:
-         * - flow.launched → EventsIngested
-         * - flow.step_viewed → EventsIngested
-         * - flow.completed → EventsIngested
-         * - flow.exited → EventsIngested (informational)
-         */
-        async trackPlayerEvent(eventName, flowId, options) {
-            const featureKey = options?.isSurvey ? "survey_insights" : "runtime_guidance";
-            this.track(eventName, {
-                featureKey,
-                dimensions: {
-                    billingDimension: "EventsIngested",
-                    flowId,
-                    pageUrl: typeof window !== "undefined" ? window.location.href : "",
-                    referrer: typeof document !== "undefined" ? document.referrer : "",
-                    host: typeof window !== "undefined" ? window.location.host : "",
-                    ...options?.stepId ? { stepId: options.stepId } : {}
-                },
-                // Events during normal flow execution are Billable
-                classification: "Billable"
-            });
-        }
-        /**
-         * Flush the current queue by sending batches to the server.
-         */
-        async flush() {
-            if (!this._isInitialized) return;
-            if (this._isFlushing) {
-                return;
-            }
-            if (this._inMemoryQueue.length === 0) {
-                return;
-            }
-            this._isFlushing = true;
-            const config = this._config || window.__DAP_CONFIG__;
-            if (config?.debug || window.__DAP_DEBUG__) {
-                console.debug(`[DAP Telemetry] Flushing ${this._inMemoryQueue.length} events...`);
-            }
-            const groups = {};
-            const unresolvableRecords = [];
-            for (const record of this._inMemoryQueue) {
-                let orgId = record.orgId;
-                if (!orgId && config?.organizationid) {
-                    orgId = config.organizationid;
-                    record.orgId = orgId;
-                }
-                let siteCollectionId = record.event.siteCollectionId;
-                if (!siteCollectionId && config?.siteid) {
-                    siteCollectionId = config.siteid;
-                    record.event.siteCollectionId = siteCollectionId;
-                }
-                if (!orgId || !siteCollectionId) {
-                    unresolvableRecords.push(record);
-                    continue;
-                }
-                if (!record.event.userId) {
-                    try {
-                        const analyticsContext = userContextService.getAnalyticsContext();
-                        let uId = analyticsContext?.userId || null;
-                        if (uId) {
-                            if (!uId.startsWith("usr_runtime_")) {
-                                uId = `usr_runtime_${uId}`;
-                            }
-                            record.event.userId = uId;
-                        }
-                    } catch {
-                    }
-                }
-                const key = `${orgId}:${siteCollectionId}`;
-                if (!groups[key]) {
-                    groups[key] = [];
-                }
-                groups[key].push(record);
-            }
-            const remainingQueue = [...unresolvableRecords];
-            const sendPromises = Object.entries(groups).map(async ([compoundKey, records]) => {
-                const [orgId, siteCollectionId] = compoundKey.split(":");
-                const requestId = `req_player_${generateUlid()}`;
-                const payload = {
-                    requestId,
-                    events: records.map((r) => r.event)
-                };
-                const base = getBaseUrl(config?.apiurl || "");
-                const url = `${base}/telemetry/organizations/${encodeURIComponent(orgId)}/site-collections/${encodeURIComponent(siteCollectionId)}/events`;
-                try {
-                    if (config?.debug || window.__DAP_DEBUG__) {
-                        console.debug(`[DAP Telemetry] POST to ${url} for requestId: ${requestId}`, payload);
-                    }
-                    await http(config, url, {
-                        method: "POST",
-                        body: payload,
-                        hostBase: typeof window !== "undefined" ? window.location.origin : "",
-                        includeHostHeader: true
-                    });
-                    if (config?.debug || window.__DAP_DEBUG__) {
-                        console.debug(`[DAP Telemetry] Batch ${requestId} sent successfully.`);
-                    }
-                } catch (err) {
-                    console.warn(`[DAP Telemetry] Batch ${requestId} failed:`, err);
-                    this.requeueRecords(records, remainingQueue);
-                }
-            });
-            await Promise.all(sendPromises);
-            remainingQueue.sort((a, b) => a.queuedAt - b.queuedAt);
-            this.saveQueue(remainingQueue);
-            this._isFlushing = false;
-        }
-        /**
-         * Synchronous-fallback flush for beforeunload / pagehide events
-         */
-        flushSync() {
-            if (this._inMemoryQueue.length === 0 || !this._config) return;
-            const config = this._config;
-            const groups = {};
-            for (const record of this._inMemoryQueue) {
-                const orgId = record.orgId || config.organizationid;
-                const siteCollectionId = record.event.siteCollectionId || config.siteid;
-                if (orgId && siteCollectionId) {
-                    const key = `${orgId}:${siteCollectionId}`;
-                    if (!groups[key]) {
-                        groups[key] = [];
-                    }
-                    groups[key].push(record);
-                }
-            }
-            for (const [compoundKey, records] of Object.entries(groups)) {
-                const [orgId, siteCollectionId] = compoundKey.split(":");
-                const requestId = `req_player_${generateUlid()}`;
-                const payload = {
-                    requestId,
-                    events: records.map((r) => r.event)
-                };
-                const base = getBaseUrl(config.apiurl || "");
-                const url = `${base}/telemetry/organizations/${encodeURIComponent(orgId)}/site-collections/${encodeURIComponent(siteCollectionId)}/events`;
-                try {
-                    const bodyStr = JSON.stringify(payload);
-                    if (typeof navigator !== "undefined" && navigator.sendBeacon) {
-                        const blob = new Blob([bodyStr], { type: "application/json" });
-                        navigator.sendBeacon(url, blob);
-                    } else if (typeof fetch !== "undefined") {
-                        fetch(url, {
-                            method: "POST",
-                            headers: {
-                                "Content-Type": "application/json",
-                                "X-Api-Key": config.apikey || ""
-                            },
-                            body: bodyStr,
-                            keepalive: true,
-                            credentials: "omit",
-                            cache: "no-cache"
-                        });
-                    }
-                } catch {
-                }
-            }
-            this._inMemoryQueue = [];
-            try {
-                if (typeof localStorage !== "undefined") {
-                    localStorage.removeItem(this.STORAGE_KEY);
-                }
-            } catch {
-            }
-        }
-        /**
-         * Requeue failed records, dropping after 10 retries
-         */
-        requeueRecords(records, targetQueue) {
-            records.forEach((r) => {
-                r.retryCount += 1;
-                if (r.retryCount < 10) {
-                    targetQueue.push(r);
-                } else {
-                    console.warn(`[DAP Telemetry] Dropping event ${r.id} after exceeding max retries.`);
-                }
-            });
-        }
-        /**
-         * Persist event queue to local storage
-         */
-        saveQueue(queue) {
-            this._inMemoryQueue = queue;
-            try {
-                if (typeof localStorage !== "undefined") {
-                    localStorage.setItem(this.STORAGE_KEY, JSON.stringify(queue));
-                }
-            } catch {
-            }
-        }
-        startInterval() {
-            this.stopInterval();
-            this._intervalId = setInterval(() => {
-                this.flush().catch((err) => {
-                    console.warn("[DAP Telemetry] Periodic flush failed:", err);
-                });
-            }, this.BATCH_INTERVAL_MS);
-        }
-        stopInterval() {
-            if (this._intervalId) {
-                clearInterval(this._intervalId);
-                this._intervalId = null;
-            }
-        }
-        /**
-         * Triggers clean shutdown of the SDK flush timers.
-         */
-        shutdown() {
-            this.stopInterval();
-            this.flushSync();
-            this._isInitialized = false;
-        }
-    };
-    _TelemetryService._instance = null;
-    var TelemetryService = _TelemetryService;
-    var telemetryService = TelemetryService.getInstance();
-
     // src/utils/privacyManager.ts
     var PRIVACY_PREFS_KEY = "dap_privacy_preferences";
     var DEFAULT_PREFERENCES = {
@@ -13074,12 +12621,6 @@ var DAP = (function (exports) {
             return;
         }
         trackingState.markStepTracked(flowId, stepId);
-        telemetryService.trackPlayerEvent("flow.step_viewed", flowId, {
-            stepId,
-            isSurvey: stepId.startsWith("s") || stepId.toLowerCase().includes("survey")
-        }).catch((err) => {
-            console.warn("[DAP] Failed to send flow.step_viewed telemetry:", err);
-        });
         const payload = {
             flowId,
             stepId,
@@ -14957,9 +14498,6 @@ var DAP = (function (exports) {
                 isFlowRunning: true,
                 activeStepIndex: this._state.activeStep
             });
-            telemetryService.trackPlayerEvent("flow.launched", flowData.flowId).catch((err) => {
-                console.warn("[DAP] Failed to send flow.launched telemetry:", err);
-            });
             this.executeStep();
         }
         /**
@@ -14968,13 +14506,7 @@ var DAP = (function (exports) {
          */
         abortFlow() {
             if (!this._state.flowInProgress) return;
-            const flowId = this._state.activeFlowId;
-            console.debug(`[DAP] Aborting flow: ${flowId}`);
-            if (flowId) {
-                telemetryService.trackPlayerEvent("flow.exited", flowId).catch((err) => {
-                    console.warn("[DAP] Failed to send flow.exited telemetry:", err);
-                });
-            }
+            console.debug(`[DAP] Aborting flow: ${this._state.activeFlowId}`);
             if (this._currentFlow) {
                 this._currentFlow.steps.forEach((step) => {
                     this.removeStepVisualUX(step);
@@ -14988,14 +14520,14 @@ var DAP = (function (exports) {
                     console.error(`[DAP] Error clearing session during abort:`, e);
                 }
                 try {
-                    const flowId2 = this._state.activeFlowId;
+                    const flowId = this._state.activeFlowId;
                     const activeStr = sessionStorage.getItem("dap_active_flows");
                     if (activeStr) {
                         const active = JSON.parse(activeStr);
                         if (Array.isArray(active)) {
-                            const updated = active.filter((id) => id !== flowId2);
+                            const updated = active.filter((id) => id !== flowId);
                             sessionStorage.setItem("dap_active_flows", JSON.stringify(updated));
-                            console.debug(`[DAP] [Cross-Site] Removed aborted flow ${flowId2} from active flows list`);
+                            console.debug(`[DAP] [Cross-Site] Removed aborted flow ${flowId} from active flows list`);
                         }
                     }
                 } catch (e) {
@@ -17265,11 +16797,6 @@ var DAP = (function (exports) {
             const flowData = this._currentFlow;
             const flowId = this._state.activeFlowId;
             console.debug(`[DAP] \u2705 FLOW COMPLETED: ${flowId}`);
-            if (flowId) {
-                telemetryService.trackPlayerEvent("flow.completed", flowId).catch((err) => {
-                    console.warn("[DAP] Failed to send flow.completed telemetry:", err);
-                });
-            }
             console.debug(`[DAP] \u{1F4CA} Completed ${this._state.triggeredSteps.size} steps out of ${flowData?.steps.length || 0} total steps`);
             if (flowId) {
                 this.clearFlowProgress(flowId);
@@ -19184,11 +18711,10 @@ var DAP = (function (exports) {
         }
         if (!configUrl) throw new Error("DAP.init: configUrl is required");
         const pathname = location.pathname.replace(/^\/+/, "");
-        let cfg = await loadConfig(configUrl);
+        const cfg = await loadConfig(configUrl);
         const hostBase = location.origin;
         window.__DAP_CONFIG__ = cfg;
         _dapConfig = cfg;
-        telemetryService.setConfig(cfg);
         if (user) {
             userContextService.setUser(user);
             const resolvedUser = userContextService.getUser();
