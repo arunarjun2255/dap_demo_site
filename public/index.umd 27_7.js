@@ -118,8 +118,6 @@ var DAP = (function (exports) {
         const method = (opts.method || "GET").toUpperCase();
         const headers = {
             "X-Api-Key": cfg.apikey,
-            "X-Organization-Id": cfg.organizationid,
-            "X-Site-Id": cfg.siteid,
             ...opts.includeHostHeader && opts.hostBase ? { "X-Host-Url": opts.hostBase } : {},
             ...opts.headers || {}
         };
