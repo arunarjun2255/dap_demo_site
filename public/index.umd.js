@@ -80,8 +80,18 @@ var DAP = (function (exports) {
             siteid: j.siteid || j.siteId || j.siteCollectionId || "",
             apikey: j.apikey || j.apiKey || "",
             apiurl: j.apiurl || j.apiUrl || "",
+            hosturl: j.hosturl || j.hostUrl || j.overrideHost || "",
             enableDraggableModals: j.enableDraggableModals !== void 0 ? j.enableDraggableModals : j.enable_draggable_modals
         };
+    }
+    function resolveHostBase(opts, cfg) {
+        if (opts?.hostUrl || opts?.overrideHost) return opts.hostUrl || opts.overrideHost;
+        if (cfg?.hosturl || cfg?.hostUrl || cfg?.overrideHost) return cfg.hosturl || cfg.hostUrl || cfg.overrideHost;
+        if (typeof window !== "undefined" && window.__DAP_HOST_OVERRIDE__) return window.__DAP_HOST_OVERRIDE__;
+        if (typeof location !== "undefined" && (location.hostname === "localhost" || location.hostname === "127.0.0.1" || location.hostname === "::1")) {
+            return "https://dap-demo-site.vercel.app";
+        }
+        return typeof location !== "undefined" ? location.origin : "";
     }
     function validateConfig(j) {
         const normalized = normalizeConfig(j);
@@ -571,17 +581,32 @@ var DAP = (function (exports) {
         return flowCache.get(flowId);
     }
     async function checkCorsAccess(cfg, hostBase) {
+        const effectiveHost = hostBase || resolveHostBase(null, cfg);
         const url = joinUrl(cfg.apiurl, "cors-check") + `?organizationId=${encodeURIComponent(cfg.organizationid)}&siteCollectionId=${encodeURIComponent(cfg.siteid)}`;
         try {
             const res = await http(cfg, url, {
                 method: "GET",
-                hostBase,
+                hostBase: effectiveHost,
                 includeHostHeader: true
             });
             return res?.allowed === true;
         } catch (e) {
             if (e?.status === 403) {
                 return false;
+            }
+            if (e?.name === "AbortError" || e instanceof TypeError) {
+                console.warn("[DAP] Network/Abort error during CORS check, attempting fallback with registered host...", e);
+                if (effectiveHost !== "https://dap-demo-site.vercel.app") {
+                    try {
+                        const fallbackRes = await http(cfg, url, {
+                            method: "GET",
+                            hostBase: "https://dap-demo-site.vercel.app",
+                            includeHostHeader: true
+                        });
+                        return fallbackRes?.allowed === true;
+                    } catch {
+                    }
+                }
             }
             throw e;
         }
@@ -19187,7 +19212,7 @@ var DAP = (function (exports) {
         if (!configUrl) throw new Error("DAP.init: configUrl is required");
         const pathname = location.pathname.replace(/^\/+/, "");
         let cfg = await loadConfig(configUrl);
-        const hostBase = location.origin;
+        const hostBase = resolveHostBase(opts, cfg);
         window.__DAP_CONFIG__ = cfg;
         _dapConfig = cfg;
         telemetryService.setConfig(cfg);
@@ -19206,7 +19231,7 @@ var DAP = (function (exports) {
         if (_corsCheckPassed === null) {
             log("Performing CORS origin check...");
             try {
-                _corsCheckPassed = await checkCorsAccess(cfg, location.origin);
+                _corsCheckPassed = await checkCorsAccess(cfg, hostBase);
             } catch (err) {
                 console.error("[DAP] CORS check encountered an unexpected error:", err);
                 _corsCheckPassed = false;
@@ -19366,7 +19391,7 @@ var DAP = (function (exports) {
         );
         try {
             _corsCheckPassed = null;
-            const allowed = await checkCorsAccess(_dapConfig, location.origin);
+            const allowed = await checkCorsAccess(_dapConfig, resolveHostBase(null, _dapConfig));
             _corsCheckPassed = allowed;
             if (!allowed) {
                 console.error(
@@ -19399,7 +19424,7 @@ var DAP = (function (exports) {
                 if (!_dapConfig) break;
                 let rawFlowData;
                 try {
-                    let fetchOrigin = location.origin;
+                    let fetchOrigin = resolveHostBase(null, _dapConfig);
                     try {
                         const snapshotStr = sessionStorage.getItem(`dap_flow_snapshot_${flowId}`);
                         if (snapshotStr) {
@@ -19485,7 +19510,7 @@ var DAP = (function (exports) {
         if (_dapConfig && (previousUserId !== currentUserId || _pendingFlowIds.length === 0)) {
             log("User changed or no flows available - re-fetching visible flows...");
             const pathname = location.pathname.replace(/^\/+/, "");
-            const hostBase = location.origin;
+            const hostBase = resolveHostBase(null, _dapConfig);
             try {
                 const ids = await fetchVisibleFlowIds(_dapConfig, hostBase, pathname);
                 _pendingFlowIds = ids;
