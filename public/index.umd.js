@@ -41,10 +41,10 @@ var DAP = (function (exports) {
 
     /* Hide webkit validation bubble inside DAP forms */
     ${DAP_FORM_CLASSES.map(
-    (cls) => `.${cls} input::-webkit-validation-bubble,
+      (cls) => `.${cls} input::-webkit-validation-bubble,
     .${cls} input::-webkit-validation-bubble-message,
     .${cls} input::-webkit-validation-bubble-arrow`
-  ).join(",\n    ")} {
+    ).join(",\n    ")} {
       display: none !important;
     }
   `;
@@ -2445,7 +2445,7 @@ var DAP = (function (exports) {
       return path === normP || path === normP.replace(/\/$/, "") || `${normP}/` === path;
     }
     const regexStr = "^" + normP.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + // * → .*
-    "$";
+      "$";
     return new RegExp(regexStr, "i").test(path);
   }
   function resolveNavigationUrl(targetUrl) {
@@ -4679,7 +4679,7 @@ var DAP = (function (exports) {
     console.debug("[DAP] Modal flow ID:", id);
     const completionTracker = payload._completionTracker;
     ensureStyles2();
-    const { overlay, modal, header} = createModalElements(payload);
+    const { overlay, modal, header } = createModalElements(payload);
     overlay.id = `dap-modal-overlay-${id}`;
     document.documentElement.appendChild(overlay);
     const prevActive = document.activeElement;
@@ -12374,14 +12374,14 @@ var DAP = (function (exports) {
     }
     interceptHistoryMethods() {
       const self = this;
-      history.pushState = function(state, title, url) {
+      history.pushState = function (state, title, url) {
         self.originalPushState.apply(history, arguments);
         console.debug("[DAP] PageContextService: PushState detected:", url);
         setTimeout(() => {
           self.updateContext("navigation");
         }, 0);
       };
-      history.replaceState = function(state, title, url) {
+      history.replaceState = function (state, title, url) {
         self.originalReplaceState.apply(history, arguments);
         console.debug("[DAP] PageContextService: ReplaceState detected:", url);
         setTimeout(() => {
@@ -14443,7 +14443,7 @@ var DAP = (function (exports) {
         return path === p || path === p.replace(/\/$/, "") || `${p}/` === path;
       }
       const regexStr = "^" + p.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + // * → .*
-      "$";
+        "$";
       return new RegExp(regexStr, "i").test(path);
     }
     getStepTargetUrl(step) {
