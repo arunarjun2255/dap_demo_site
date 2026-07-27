@@ -8,7 +8,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'https://iap-api-dev.cognior.com',
+        target: 'https://iap-api-dev.cognior.com/api/v1',
         changeOrigin: true,
       },
     },
