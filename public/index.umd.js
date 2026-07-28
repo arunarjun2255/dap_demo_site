@@ -2545,7 +2545,7 @@ var DAP = (function (exports) {
       }
       this.fetchPromise = (async () => {
         const apiBase = (cfg.apiurl || "").replace(/\/+$/, "");
-        const path = `${apiBase}/api/v1/organizations/${encodeURIComponent(cfg.organizationid)}/licensing/entitlements`;
+        const path = /\/v\d+$/i.test(apiBase) || /\/api$/i.test(apiBase) || apiBase.includes("/api/") ? `${apiBase}/organizations/${encodeURIComponent(cfg.organizationid)}/licensing/entitlements` : `${apiBase}/api/v1/organizations/${encodeURIComponent(cfg.organizationid)}/licensing/entitlements`;
         console.debug(`[DAP] Fetching entitlements from: ${path}`);
         try {
           const res = await http(cfg, path, {
