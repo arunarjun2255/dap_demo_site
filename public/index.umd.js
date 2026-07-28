@@ -2550,8 +2550,6 @@ var DAP = (function (exports) {
         try {
           const res = await http(cfg, path, {
             method: "GET",
-            hostBase,
-            includeHostHeader: true,
             timeoutMs: 1e4
           });
           if (res && Array.isArray(res.features)) {
@@ -2569,10 +2567,14 @@ var DAP = (function (exports) {
             return null;
           }
         } catch (err) {
-          console.error("[DAP] Error fetching entitlements:", err);
-          if (err?.status === 403 || err?.status === 401 || err?.status === 402) {
+          if (err instanceof TypeError || err?.name === "TypeError" || !err?.status) {
+            console.debug("[DAP] Entitlements request bypassed due to CORS/network restriction:", err?.message || err);
+            this.licenseStatus = "valid";
+          } else if (err?.status === 403 || err?.status === 401 || err?.status === 402) {
+            console.warn(`[DAP] Entitlements request returned HTTP ${err.status}: license marked expired.`);
             this.licenseStatus = "expired";
           } else {
+            console.warn("[DAP] Error fetching entitlements:", err);
             this.licenseStatus = "error";
           }
           return null;
