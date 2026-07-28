@@ -2508,292 +2508,6 @@ var DAP = (function (exports) {
     }
   }
 
-  // src/services/licensingService.ts
-  var SESSION_STORAGE_KEY = "dap_organization_entitlements";
-  var POPUP_CONTAINER_ID = "dap-license-expired-popup";
-  var LicensingService = class {
-    constructor() {
-      this.entitlements = null;
-      this.licenseStatus = "unknown";
-      this.fetchPromise = null;
-      this.loadFromStorage();
-    }
-    /**
-     * Load cached entitlements from sessionStorage on service initialization
-     */
-    loadFromStorage() {
-      try {
-        const stored = sessionStorage.getItem(SESSION_STORAGE_KEY);
-        if (stored) {
-          this.entitlements = JSON.parse(stored);
-          this.licenseStatus = "valid";
-        }
-      } catch (e) {
-      }
-    }
-    /**
-     * Fetch entitlements from the backend endpoint:
-     * GET /api/v1/organizations/{organizationId}/licensing/entitlements
-     */
-    async fetchEntitlements(cfg, hostBase) {
-      if (!cfg || !cfg.organizationid) {
-        console.warn("[DAP] LicensingService: Cannot fetch entitlements without valid organizationId");
-        return null;
-      }
-      if (this.fetchPromise) {
-        return this.fetchPromise;
-      }
-      this.fetchPromise = (async () => {
-        const apiBase = (cfg.apiurl || "").replace(/\/+$/, "");
-        const path = `${apiBase}/api/v1/organizations/${encodeURIComponent(cfg.organizationid)}/licensing/entitlements`;
-        console.debug(`[DAP] Fetching entitlements from: ${path}`);
-        try {
-          const res = await http(cfg, path, {
-            method: "GET",
-            hostBase,
-            includeHostHeader: true,
-            timeoutMs: 1e4
-          });
-          if (res && Array.isArray(res.features)) {
-            this.entitlements = res;
-            this.licenseStatus = "valid";
-            try {
-              sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(res));
-            } catch (e) {
-            }
-            console.debug("[DAP] Successfully loaded entitlements:", this.entitlements);
-            return this.entitlements;
-          } else {
-            console.warn("[DAP] Invalid entitlement payload returned from server:", res);
-            this.licenseStatus = "error";
-            return null;
-          }
-        } catch (err) {
-          console.error("[DAP] Error fetching entitlements:", err);
-          if (err?.status === 403 || err?.status === 401 || err?.status === 402) {
-            this.licenseStatus = "expired";
-          } else {
-            this.licenseStatus = "error";
-          }
-          return null;
-        } finally {
-          this.fetchPromise = null;
-        }
-      })();
-      return this.fetchPromise;
-    }
-    /**
-     * Get the currently loaded organization entitlements object
-     */
-    getEntitlements() {
-      return this.entitlements;
-    }
-    /**
-     * Check if a specific feature key is enabled under current license entitlements
-     */
-    isFeatureEnabled(featureKey) {
-      if (!featureKey) return true;
-      if (this.licenseStatus === "expired") {
-        return false;
-      }
-      if (this.entitlements && Array.isArray(this.entitlements.features)) {
-        const targetKey = featureKey.toLowerCase().trim();
-        const feat = this.entitlements.features.find(
-          (f) => (f.featureKey || "").toLowerCase().trim() === targetKey
-        );
-        if (!feat) {
-          console.warn(`[DAP] Feature "${featureKey}" is missing from license entitlements.`);
-          return false;
-        }
-        if (!feat.isEnabled) {
-          console.warn(`[DAP] Feature "${featureKey}" is disabled in current license entitlements.`);
-          return false;
-        }
-        if (feat.gracePeriodEndsAtUtc) {
-          const graceEnd = new Date(feat.gracePeriodEndsAtUtc).getTime();
-          if (!isNaN(graceEnd) && Date.now() > graceEnd) {
-            console.warn(`[DAP] Grace period for feature "${featureKey}" ended at ${feat.gracePeriodEndsAtUtc}.`);
-            return false;
-          }
-        }
-        return true;
-      }
-      return true;
-    }
-    /**
-     * Evaluate whether a step or flow step is entitled to execute under current license
-     */
-    checkStepEntitlement(step) {
-      if (!step) return { isAllowed: true };
-      const requiredFeatures = [];
-      if (typeof step.featureKey === "string" && step.featureKey) {
-        requiredFeatures.push(step.featureKey);
-      }
-      if (typeof step.requiredFeature === "string" && step.requiredFeature) {
-        requiredFeatures.push(step.requiredFeature);
-      }
-      const isSurvey = step.kind === "survey" || step.type === "survey" || !!step.survey;
-      if (isSurvey) {
-        requiredFeatures.push("survey_module");
-      }
-      const isKB = step.kind === "kb" || step.kind === "kb-item" || step.kind === "kb-item-viewer" || Array.isArray(step.body) && step.body.some((b) => b && (b.kind === "kb" || b.kind === "kb-item"));
-      if (isKB) {
-        requiredFeatures.push("knowledge_base");
-      }
-      const isWalkthrough = step.kind === "walkthrough" || step.type === "walkthrough" || !!step.walkthrough;
-      if (isWalkthrough) {
-        requiredFeatures.push("process_walkthrough");
-      }
-      const targetUrl = step.targetUrl || step.url || step.tooltip && step.tooltip.nextStepTargetUrl;
-      if (targetUrl && typeof targetUrl === "string") {
-        try {
-          const parsed = new URL(targetUrl, window.location.href);
-          if (parsed.hostname && parsed.hostname !== window.location.hostname) {
-            requiredFeatures.push("multi_website");
-          }
-        } catch (e) {
-        }
-      }
-      for (const featKey of requiredFeatures) {
-        if (!this.isFeatureEnabled(featKey)) {
-          return { isAllowed: false, missingFeature: featKey };
-        }
-      }
-      return { isAllowed: true };
-    }
-    /**
-     * Render a premium 'License Expired' popup modal when a step is blocked
-     */
-    showLicenseExpiredPopup(featureKey, customMessage) {
-      if (document.getElementById(POPUP_CONTAINER_ID)) {
-        return;
-      }
-      const featureName = featureKey ? featureKey.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase()) : "Required Feature";
-      const defaultMsg = featureKey ? `Your license has expired or does not include access to the <strong>${featureName}</strong> feature (<code>${featureKey}</code>). Please contact your administrator to upgrade your plan.` : "Your DAP subscription license has expired. Access to experience steps is currently restricted. Please contact your system administrator.";
-      const messageHtml = sanitizeHtml(customMessage || defaultMsg);
-      const overlay = document.createElement("div");
-      overlay.id = POPUP_CONTAINER_ID;
-      overlay.style.cssText = `
-      position: fixed;
-      inset: 0;
-      z-index: 2147483647;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: rgba(15, 23, 42, 0.55);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      padding: 20px;
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      animation: dapLicenseFadeIn 0.3s ease-out both;
-    `;
-      const styleEl = document.createElement("style");
-      styleEl.textContent = `
-      @keyframes dapLicenseFadeIn {
-        from { opacity: 0; }
-        to   { opacity: 1; }
-      }
-      @keyframes dapLicenseScaleUp {
-        from { opacity: 0; transform: scale(0.92) translateY(10px); }
-        to   { opacity: 1; transform: scale(1) translateY(0); }
-      }
-    `;
-      const dialog = document.createElement("div");
-      dialog.style.cssText = `
-      background: #ffffff;
-      border: 1px solid #e2e8f0;
-      border-radius: 20px;
-      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0,0,0,0.05);
-      width: 100%;
-      max-width: 460px;
-      padding: 32px 28px 28px;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      text-align: center;
-      animation: dapLicenseScaleUp 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
-      color: #0f172a;
-    `;
-      dialog.innerHTML = `
-      <div style="
-        width: 56px;
-        height: 56px;
-        border-radius: 16px;
-        background: #fef2f2;
-        border: 1px solid #fecaca;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        margin-bottom: 20px;
-        color: #dc2626;
-      ">
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-          <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-        </svg>
-      </div>
-
-      <h3 style="
-        margin: 0 0 10px 0;
-        font-size: 20px;
-        font-weight: 700;
-        letter-spacing: -0.02em;
-        color: #0f172a;
-      ">License Expired</h3>
-
-      <div style="
-        font-size: 14px;
-        line-height: 1.6;
-        color: #475569;
-        margin-bottom: 28px;
-      ">
-        ${messageHtml}
-      </div>
-
-      <button id="dap-license-close-btn" style="
-        width: 100%;
-        padding: 12px 20px;
-        border-radius: 12px;
-        background: #0ea5e9;
-        color: #ffffff;
-        border: none;
-        font-weight: 600;
-        font-size: 14px;
-        cursor: pointer;
-        transition: background 0.2s ease, transform 0.1s ease;
-        box-shadow: 0 4px 12px rgba(14, 165, 233, 0.25);
-      ">
-        Got It
-      </button>
-    `;
-      overlay.appendChild(styleEl);
-      overlay.appendChild(dialog);
-      document.body.appendChild(overlay);
-      const closeBtn = dialog.querySelector("#dap-license-close-btn");
-      if (closeBtn) {
-        closeBtn.addEventListener("click", () => {
-          if (overlay.parentNode) {
-            overlay.parentNode.removeChild(overlay);
-          }
-        });
-        closeBtn.addEventListener("mouseenter", () => {
-          closeBtn.style.background = "#0284c7";
-        });
-        closeBtn.addEventListener("mouseleave", () => {
-          closeBtn.style.background = "#0ea5e9";
-        });
-      }
-      overlay.addEventListener("click", (e) => {
-        if (e.target === overlay) {
-          if (overlay.parentNode) {
-            overlay.parentNode.removeChild(overlay);
-          }
-        }
-      });
-    }
-  };
-  var licensingService = new LicensingService();
-
   // src/experiences/modalSequence.ts
   function registerModalSequence() {
     register("modalSequence", renderModalSequence);
@@ -2826,13 +2540,6 @@ var DAP = (function (exports) {
     async function evaluateAndRenderStep(stepIndex) {
       const step = payload.steps[stepIndex];
       if (!step) return;
-      const check = licensingService.checkStepEntitlement(step);
-      if (!check.isAllowed) {
-        console.warn(`[DAP] Step ${stepIndex} blocked due to missing entitlement: ${check.missingFeature}`);
-        licensingService.showLicenseExpiredPopup(check.missingFeature);
-        closeAll();
-        return;
-      }
       const stepId = step.stepId || `step-${stepIndex + 1}`;
       console.debug(`[DAP] Evaluating step ${stepIndex}:`, {
         stepId,
@@ -2880,13 +2587,6 @@ var DAP = (function (exports) {
     }
     async function renderStepExperience(stepIndex, step, stepId, showNavigation) {
       cleanupCurrentStep();
-      const check = licensingService.checkStepEntitlement(step);
-      if (!check.isAllowed) {
-        console.warn(`[DAP] Step ${stepIndex} blocked due to missing entitlement: ${check.missingFeature}`);
-        licensingService.showLicenseExpiredPopup(check.missingFeature);
-        closeAll();
-        return;
-      }
       console.debug(`[DAP] Rendering step ${stepIndex} (${step.kind})`);
       switch (step.kind) {
         case "modal":
@@ -7599,11 +7299,6 @@ var DAP = (function (exports) {
   }
   async function renderSurvey(flow) {
     const { payload } = flow;
-    if (!licensingService.isFeatureEnabled("survey_module")) {
-      console.warn("[DAP] Survey step blocked: survey_module is not licensed or expired.");
-      licensingService.showLicenseExpiredPopup("survey_module");
-      return;
-    }
     console.debug("[DAP] renderSurvey called with payload:", {
       hasHeader: !!payload.header,
       hasBody: !!payload.body,
@@ -12302,11 +11997,6 @@ var DAP = (function (exports) {
   async function renderWalkthrough(flow) {
     const { payload, id } = flow;
     const completionTracker = payload._completionTracker;
-    if (!licensingService.isFeatureEnabled("process_walkthrough")) {
-      console.warn("[DAP] Walkthrough step blocked: process_walkthrough is not licensed or expired.");
-      licensingService.showLicenseExpiredPopup("process_walkthrough");
-      return;
-    }
     ensureStyles8();
     let currentStepIndex = 0;
     let isActive = false;
@@ -16009,12 +15699,6 @@ var DAP = (function (exports) {
      * Execute the actual step content (UX experience)
      */
     executeStepContent(step, stepIndex) {
-      const check = licensingService.checkStepEntitlement(step);
-      if (!check.isAllowed) {
-        console.warn(`[DAP] Step ${step.stepId} blocked due to missing entitlement: ${check.missingFeature}`);
-        licensingService.showLicenseExpiredPopup(check.missingFeature);
-        return;
-      }
       if (this._state.activeFlowId) {
         this._onFlowActive?.(this._state.activeFlowId);
       }
@@ -19490,11 +19174,6 @@ var DAP = (function (exports) {
       return;
     }
     log("CORS check passed, proceeding with SDK initialization");
-    try {
-      await licensingService.fetchEntitlements(cfg, location.origin);
-    } catch (e) {
-      log("Error fetching organization entitlements during init:", e);
-    }
     let resumeFlowId = null;
     let resumeStepIndex = null;
     if (typeof window !== "undefined") {
