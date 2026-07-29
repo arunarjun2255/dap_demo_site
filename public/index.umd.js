@@ -448,154 +448,6 @@ var DAP = (function (exports) {
   var UserContextService = _UserContextService;
   var userContextService = UserContextService.getInstance();
 
-  // src/flows.ts
-  var FlowCache = class {
-    constructor() {
-      this.CACHE_PREFIX = "dap_flow_cache_";
-      this.CACHE_EXPIRY_MS = 24 * 60 * 60 * 1e3;
-    }
-    // 24 hours
-    get(flowId) {
-      try {
-        const cacheKey = `${this.CACHE_PREFIX}${flowId}`;
-        const cached = sessionStorage.getItem(cacheKey);
-        if (!cached) return null;
-        const entry = JSON.parse(cached);
-        if (Date.now() - entry.timestamp > this.CACHE_EXPIRY_MS) {
-          sessionStorage.removeItem(cacheKey);
-          return null;
-        }
-        return entry.flowData;
-      } catch (e) {
-        return null;
-      }
-    }
-    set(flowId, flowData) {
-      try {
-        const cacheKey = `${this.CACHE_PREFIX}${flowId}`;
-        const entry = {
-          flowId,
-          flowData,
-          timestamp: Date.now(),
-          originalSiteId: flowData?.siteId || "unknown"
-        };
-        sessionStorage.setItem(cacheKey, JSON.stringify(entry));
-      } catch (e) {
-      }
-    }
-    clear() {
-      try {
-        const keys = [];
-        for (let i = 0; i < sessionStorage.length; i++) {
-          const key = sessionStorage.key(i);
-          if (key?.startsWith(this.CACHE_PREFIX)) {
-            keys.push(key);
-          }
-        }
-        keys.forEach((key) => sessionStorage.removeItem(key));
-      } catch (e) {
-      }
-    }
-  };
-  var flowCache = new FlowCache();
-  async function fetchVisibleFlowIds(cfg, hostBase, page) {
-    const apiBase = getBaseUrl(cfg.apiurl);
-    const base = joinUrl(apiBase, `/iap-experience/organizations/${cfg.organizationid}/site-collections/${cfg.siteid}/visible-userflows`);
-    try {
-      const res = await http(cfg, base, {
-        method: "POST",
-        hostBase,
-        includeHostHeader: true,
-        body: {
-          hostname: hostBase,
-          page: page ?? null,
-          userId: userContextService.getAnalyticsContext().userId
-        }
-      });
-      if (!Array.isArray(res)) return [];
-      return res.map((item) => typeof item === "string" ? item : item.flowId || item.id || String(item));
-    } catch (e) {
-      if (e && e.status === 405) {
-        const url = `${base}?hostname=${encodeURIComponent(hostBase)}`;
-        const res = await http(cfg, url, {
-          method: "GET",
-          hostBase,
-          includeHostHeader: true
-        });
-        if (!Array.isArray(res?.flowIds)) return [];
-        return res.flowIds.map((item) => typeof item === "string" ? item : item.flowId || item.id || String(item));
-      }
-      throw e;
-    }
-  }
-  async function fetchFlowById(cfg, hostBase, flowId, previewSessionId) {
-    const cachedFlow = flowCache.get(flowId);
-    if (cachedFlow) {
-      console.debug(`[DAP] Flow ${flowId} found in cache, using cached version`);
-      return cachedFlow;
-    }
-    const apiBase = getBaseUrl(cfg.apiurl);
-    const baseUrl = joinUrl(apiBase, `/iap-experience/organizations/${cfg.organizationid}/site-collections/${cfg.siteid}/userflows/${flowId}`);
-    const url = previewSessionId ? `${baseUrl}?previewSessionId=${encodeURIComponent(previewSessionId)}` : baseUrl;
-    console.debug(`[DAP] Fetching flow ${flowId} from URL: ${url}`);
-    try {
-      const flowData = await http(cfg, url, {
-        method: "GET",
-        hostBase,
-        includeHostHeader: true
-      });
-      console.debug(`[DAP] Successfully fetched flow ${flowId} from current site, caching it`);
-      flowCache.set(flowId, flowData);
-      return flowData;
-    } catch (err) {
-      if (err?.status === 404) {
-        console.warn(`[DAP] Flow ${flowId} returned 404 from current site, checking cache...`);
-        const fallback = flowCache.get(flowId);
-        if (fallback) {
-          console.warn(
-            `[DAP] \u2705 Flow ${flowId} found in cache from previous site \u2014 using cached version. Ensure this flow is configured on all target websites.`
-          );
-          return fallback;
-        }
-        console.error(`[DAP] \u274C Flow ${flowId} not found on current site (404) and not in cache either. Cannot load flow.`);
-        throw err;
-      }
-      console.error(`[DAP] Error fetching flow ${flowId}:`, err);
-      throw err;
-    }
-  }
-  function clearFlowCache() {
-    flowCache.clear();
-  }
-  function getFlowFromCache(flowId) {
-    return flowCache.get(flowId);
-  }
-  async function checkCorsAccess(cfg, hostBase) {
-    const apiBase = getBaseUrl(cfg.apiurl);
-    const url = joinUrl(apiBase, "cors-check") + `?organizationId=${encodeURIComponent(cfg.organizationid)}&siteCollectionId=${encodeURIComponent(cfg.siteid)}&origin=${encodeURIComponent(hostBase)}&hostUrl=${encodeURIComponent(hostBase)}`;
-    try {
-      const res = await http(cfg, url, {
-        method: "GET",
-        hostBase,
-        includeHostHeader: true
-      });
-      return res?.allowed === true;
-    } catch (e) {
-      if (e?.status === 403 || e?.status === 401 || e instanceof TypeError || e?.name === "TypeError" || !e?.status) {
-        return false;
-      }
-      throw e;
-    }
-  }
-  function getBaseUrl(apiurl) {
-    return (apiurl || "").replace(/\/+$/, "");
-  }
-  function joinUrl(base, tail) {
-    const b = (base || "").replace(/\/+$/, "");
-    const t = (tail || "").replace(/^\/+/, "");
-    return `${b}/${t}`;
-  }
-
   // src/utils/sanitize.ts
   function sanitizeHtml(unsafe) {
     const tmp = document.createElement("div");
@@ -712,6 +564,446 @@ var DAP = (function (exports) {
     } catch {
       return false;
     }
+  }
+
+  // src/experiences/licenseModal.ts
+  var activeLicenseModalElement = null;
+  var keydownListener = null;
+  var LICENSE_MODAL_CSS = `
+.dap-license-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 999999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--dap-overlay, rgba(15, 23, 42, 0.45));
+  backdrop-filter: blur(10px) saturate(120%);
+  -webkit-backdrop-filter: blur(10px) saturate(120%);
+  animation: dapLicenseOverlayIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
+  padding: 20px;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+@keyframes dapLicenseOverlayIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.dap-license-modal {
+  position: relative;
+  background: #ffffff;
+  border: 1px solid rgba(226, 232, 240, 0.8);
+  border-radius: 20px;
+  box-shadow: 0 24px 64px rgba(15, 23, 42, 0.18), 0 4px 16px rgba(15, 23, 42, 0.08);
+  width: 100%;
+  max-width: 480px;
+  padding: 28px 28px 24px 28px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  color: #0f172a;
+  animation: dapLicenseModalIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+  box-sizing: border-box;
+}
+
+@keyframes dapLicenseModalIn {
+  from { opacity: 0; transform: translateY(12px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.dap-license-modal-icon-badge {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 20px;
+  flex-shrink: 0;
+}
+
+.dap-license-modal-icon-badge.status-403 {
+  background: #fef2f2;
+  color: #dc2626;
+  border: 1px solid #fee2e2;
+}
+
+.dap-license-modal-icon-badge.status-429 {
+  background: #fffbebf;
+  color: #d97706;
+  border: 1px solid #fef3c7;
+}
+
+.dap-license-modal-icon-badge.status-401 {
+  background: #f0f9ff;
+  color: #0284c7;
+  border: 1px solid #e0f2fe;
+}
+
+.dap-license-modal-icon-badge.status-500 {
+  background: #f8fafc;
+  color: #64748b;
+  border: 1px solid #e2e8f0;
+}
+
+.dap-license-modal-title {
+  margin: 0 0 8px 0;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: #0f172a;
+  letter-spacing: -0.01em;
+}
+
+.dap-license-modal-message {
+  margin: 0 0 24px 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: #475569;
+}
+
+.dap-license-modal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  width: 100%;
+}
+
+.dap-license-modal-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  outline: none;
+  border: none;
+  text-decoration: none;
+}
+
+.dap-license-modal-btn-primary {
+  background: #0ea5e9;
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(14, 165, 233, 0.25);
+}
+
+.dap-license-modal-btn-primary:hover {
+  background: #0284c7;
+  box-shadow: 0 4px 12px rgba(14, 165, 233, 0.35);
+}
+
+.dap-license-modal-btn-secondary {
+  background: #f1f5f9;
+  color: #334155;
+  border: 1px solid #cbd5e1;
+}
+
+.dap-license-modal-btn-secondary:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+`;
+  function injectLicenseModalStyles() {
+    if (document.getElementById("dap-license-modal-styles")) return;
+    const styleEl = document.createElement("style");
+    styleEl.id = "dap-license-modal-styles";
+    styleEl.textContent = LICENSE_MODAL_CSS;
+    document.head.appendChild(styleEl);
+  }
+  function getIconSvg(status) {
+    if (status === 403) {
+      return `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`;
+    }
+    if (status === 429) {
+      return `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`;
+    }
+    if (status === 401) {
+      return `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 2l-2 2m-1.5 1.5L14 9.5a5 5 0 1 0 4.5 4.5l3.5-3.5V8.5L20 7l1-1z"/><circle cx="7.5" cy="16.5" r="1.5"/></svg>`;
+    }
+    return `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`;
+  }
+  function hideLicenseModal() {
+    if (keydownListener) {
+      document.removeEventListener("keydown", keydownListener);
+      keydownListener = null;
+    }
+    if (activeLicenseModalElement) {
+      activeLicenseModalElement.remove();
+      activeLicenseModalElement = null;
+    }
+  }
+  function showLicenseModal(options) {
+    hideLicenseModal();
+    injectLicenseModalStyles();
+    const { status, onOk, onContactAdmin, onRetry, contactEmail } = options;
+    let title = options.title;
+    let message = options.message;
+    if (status === 403) {
+      title = title || "License Required";
+      message = message || "Your organization's license has expired or does not include access to this feature. Please renew or upgrade your license to continue using this feature.";
+    } else if (status === 429) {
+      title = title || "Quota Exceeded";
+      message = message || "License quota exceeded. Please contact your administrator or upgrade your subscription to continue using this feature.";
+    } else if (status === 401) {
+      title = title || "Authentication Required";
+      message = message || "Your session is unauthorized or has expired. Please log in again to continue using this feature.";
+    } else {
+      title = title || "Server Error";
+      message = message || "An internal server error occurred while validating feature access. Please try again.";
+    }
+    const iconSvg = getIconSvg(status);
+    const overlay = document.createElement("div");
+    overlay.className = "dap-license-modal-overlay";
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.setAttribute("aria-labelledby", "dap-license-modal-title-id");
+    const modal = document.createElement("div");
+    modal.className = "dap-license-modal";
+    const sanitizedTitle = sanitizeHtml(title);
+    const sanitizedMessage = sanitizeHtml(message);
+    let buttonsHtml = "";
+    if (status === 500 && onRetry) {
+      buttonsHtml += `<button type="button" class="dap-license-modal-btn dap-license-modal-btn-secondary" id="dap-license-btn-retry">Retry</button>`;
+    }
+    if (status === 403 || status === 429) {
+      buttonsHtml += `<button type="button" class="dap-license-modal-btn dap-license-modal-btn-secondary" id="dap-license-btn-contact">Contact Administrator</button>`;
+    }
+    buttonsHtml += `<button type="button" class="dap-license-modal-btn dap-license-modal-btn-primary" id="dap-license-btn-ok">OK</button>`;
+    modal.innerHTML = `
+    <div class="dap-license-modal-icon-badge status-${status}">
+      ${iconSvg}
+    </div>
+    <h2 class="dap-license-modal-title" id="dap-license-modal-title-id">${sanitizedTitle}</h2>
+    <p class="dap-license-modal-message">${sanitizedMessage}</p>
+    <div class="dap-license-modal-actions">
+      ${buttonsHtml}
+    </div>
+  `;
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+    activeLicenseModalElement = overlay;
+    const okBtn = modal.querySelector("#dap-license-btn-ok");
+    const contactBtn = modal.querySelector("#dap-license-btn-contact");
+    const retryBtn = modal.querySelector("#dap-license-btn-retry");
+    if (okBtn) {
+      okBtn.addEventListener("click", () => {
+        hideLicenseModal();
+        if (onOk) onOk();
+      });
+      okBtn.focus();
+    }
+    if (contactBtn) {
+      contactBtn.addEventListener("click", () => {
+        hideLicenseModal();
+        if (onContactAdmin) {
+          onContactAdmin();
+        } else if (contactEmail) {
+          window.location.href = `mailto:${encodeURIComponent(contactEmail)}?subject=${encodeURIComponent("License Support Request")}`;
+        }
+      });
+    }
+    if (retryBtn) {
+      retryBtn.addEventListener("click", () => {
+        hideLicenseModal();
+        if (onRetry) onRetry();
+      });
+    }
+    keydownListener = (e) => {
+      if (e.key === "Escape") {
+        hideLicenseModal();
+        if (onOk) onOk();
+      }
+    };
+    document.addEventListener("keydown", keydownListener);
+    return overlay;
+  }
+  function handleRuntimeApiResponseStatus(status, options) {
+    if (status >= 200 && status < 300) {
+      return true;
+    }
+    showLicenseModal({
+      status,
+      onOk: options?.onOk,
+      onContactAdmin: options?.onContactAdmin,
+      onRetry: options?.onRetry
+    });
+    return false;
+  }
+
+  // src/flows.ts
+  var FlowCache = class {
+    constructor() {
+      this.CACHE_PREFIX = "dap_flow_cache_";
+      this.CACHE_EXPIRY_MS = 24 * 60 * 60 * 1e3;
+    }
+    // 24 hours
+    get(flowId) {
+      try {
+        const cacheKey = `${this.CACHE_PREFIX}${flowId}`;
+        const cached = sessionStorage.getItem(cacheKey);
+        if (!cached) return null;
+        const entry = JSON.parse(cached);
+        if (Date.now() - entry.timestamp > this.CACHE_EXPIRY_MS) {
+          sessionStorage.removeItem(cacheKey);
+          return null;
+        }
+        return entry.flowData;
+      } catch (e) {
+        return null;
+      }
+    }
+    set(flowId, flowData) {
+      try {
+        const cacheKey = `${this.CACHE_PREFIX}${flowId}`;
+        const entry = {
+          flowId,
+          flowData,
+          timestamp: Date.now(),
+          originalSiteId: flowData?.siteId || "unknown"
+        };
+        sessionStorage.setItem(cacheKey, JSON.stringify(entry));
+      } catch (e) {
+      }
+    }
+    clear() {
+      try {
+        const keys = [];
+        for (let i = 0; i < sessionStorage.length; i++) {
+          const key = sessionStorage.key(i);
+          if (key?.startsWith(this.CACHE_PREFIX)) {
+            keys.push(key);
+          }
+        }
+        keys.forEach((key) => sessionStorage.removeItem(key));
+      } catch (e) {
+      }
+    }
+  };
+  var flowCache = new FlowCache();
+  async function fetchVisibleFlowIds(cfg, hostBase, page) {
+    const apiBase = getBaseUrl(cfg.apiurl);
+    const base = joinUrl(apiBase, `/iap-experience/organizations/${cfg.organizationid}/site-collections/${cfg.siteid}/visible-userflows`);
+    try {
+      const res = await http(cfg, base, {
+        method: "POST",
+        hostBase,
+        includeHostHeader: true,
+        body: {
+          hostname: hostBase,
+          page: page ?? null,
+          userId: userContextService.getAnalyticsContext().userId
+        }
+      });
+      if (!Array.isArray(res)) return [];
+      return res.map((item) => typeof item === "string" ? item : item.flowId || item.id || String(item));
+    } catch (e) {
+      if (e && e.status === 405) {
+        try {
+          const url = `${base}?hostname=${encodeURIComponent(hostBase)}`;
+          const res = await http(cfg, url, {
+            method: "GET",
+            hostBase,
+            includeHostHeader: true
+          });
+          if (!Array.isArray(res?.flowIds)) return [];
+          return res.flowIds.map((item) => typeof item === "string" ? item : item.flowId || item.id || String(item));
+        } catch (getErr) {
+          if (getErr && getErr.status) {
+            handleRuntimeApiResponseStatus(getErr.status, {
+              onRetry: () => {
+                fetchVisibleFlowIds(cfg, hostBase, page);
+              }
+            });
+            return [];
+          }
+          throw getErr;
+        }
+      }
+      if (e && e.status) {
+        handleRuntimeApiResponseStatus(e.status, {
+          onRetry: () => {
+            fetchVisibleFlowIds(cfg, hostBase, page);
+          }
+        });
+        return [];
+      }
+      throw e;
+    }
+  }
+  async function fetchFlowById(cfg, hostBase, flowId, previewSessionId) {
+    const cachedFlow = flowCache.get(flowId);
+    if (cachedFlow) {
+      console.debug(`[DAP] Flow ${flowId} found in cache, using cached version`);
+      return cachedFlow;
+    }
+    const apiBase = getBaseUrl(cfg.apiurl);
+    const baseUrl = joinUrl(apiBase, `/iap-experience/organizations/${cfg.organizationid}/site-collections/${cfg.siteid}/userflows/${flowId}`);
+    const url = previewSessionId ? `${baseUrl}?previewSessionId=${encodeURIComponent(previewSessionId)}` : baseUrl;
+    console.debug(`[DAP] Fetching flow ${flowId} from URL: ${url}`);
+    try {
+      const flowData = await http(cfg, url, {
+        method: "GET",
+        hostBase,
+        includeHostHeader: true
+      });
+      console.debug(`[DAP] Successfully fetched flow ${flowId} from current site, caching it`);
+      flowCache.set(flowId, flowData);
+      return flowData;
+    } catch (err) {
+      if (err?.status === 404) {
+        console.warn(`[DAP] Flow ${flowId} returned 404 from current site, checking cache...`);
+        const fallback = flowCache.get(flowId);
+        if (fallback) {
+          console.warn(
+            `[DAP] \u2705 Flow ${flowId} found in cache from previous site \u2014 using cached version. Ensure this flow is configured on all target websites.`
+          );
+          return fallback;
+        }
+        console.error(`[DAP] \u274C Flow ${flowId} not found on current site (404) and not in cache either. Cannot load flow.`);
+        throw err;
+      }
+      if (err?.status) {
+        handleRuntimeApiResponseStatus(err.status);
+      }
+      console.error(`[DAP] Error fetching flow ${flowId}:`, err);
+      throw err;
+    }
+  }
+  function clearFlowCache() {
+    flowCache.clear();
+  }
+  function getFlowFromCache(flowId) {
+    return flowCache.get(flowId);
+  }
+  async function checkCorsAccess(cfg, hostBase) {
+    const apiBase = getBaseUrl(cfg.apiurl);
+    const url = joinUrl(apiBase, "cors-check") + `?organizationId=${encodeURIComponent(cfg.organizationid)}&siteCollectionId=${encodeURIComponent(cfg.siteid)}&origin=${encodeURIComponent(hostBase)}&hostUrl=${encodeURIComponent(hostBase)}`;
+    try {
+      const res = await http(cfg, url, {
+        method: "GET",
+        hostBase,
+        includeHostHeader: true
+      });
+      return res?.allowed === true;
+    } catch (e) {
+      if (e?.status === 403 || e?.status === 401 || e instanceof TypeError || e?.name === "TypeError" || !e?.status) {
+        return false;
+      }
+      throw e;
+    }
+  }
+  function getBaseUrl(apiurl) {
+    return (apiurl || "").replace(/\/+$/, "");
+  }
+  function joinUrl(base, tail) {
+    const b = (base || "").replace(/\/+$/, "");
+    const t = (tail || "").replace(/^\/+/, "");
+    return `${b}/${t}`;
   }
 
   // src/experiences/registry.ts
@@ -7504,6 +7796,9 @@ var DAP = (function (exports) {
             }
           } catch (error) {
             console.error("[DAP] Survey submission API error:", error);
+            if (error && error.status) {
+              handleRuntimeApiResponseStatus(error.status);
+            }
             throw error;
           }
         } else {
@@ -19601,10 +19896,13 @@ var DAP = (function (exports) {
   exports.dap = dap;
   exports.executeFlow = executeFlow;
   exports.getUser = getUser;
+  exports.handleRuntimeApiResponseStatus = handleRuntimeApiResponseStatus;
+  exports.hideLicenseModal = hideLicenseModal;
   exports.init = init;
   exports.registerFlow = registerFlow;
   exports.resetFlowRuns = resetFlowRuns;
   exports.setUser = setUser;
+  exports.showLicenseModal = showLicenseModal;
   exports.startFlow = startFlow;
   exports.updateUser = updateUser;
 
