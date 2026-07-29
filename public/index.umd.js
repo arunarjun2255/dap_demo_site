@@ -103,289 +103,6 @@ var DAP = (function (exports) {
     return normalized;
   }
 
-  // src/utils/sanitize.ts
-  function sanitizeHtml(unsafe) {
-    const tmp = document.createElement("div");
-    tmp.innerHTML = unsafe || "";
-    const elements = tmp.querySelectorAll("*");
-    for (let i = 0; i < elements.length; i++) {
-      const el = elements[i];
-      const name = el.nodeName.toLowerCase();
-      if (!ALLOW.has(name)) {
-        const text = document.createTextNode(el.textContent || "");
-        const parent = el.parentNode;
-        if (parent) parent.replaceChild(text, el);
-        continue;
-      }
-      const attrs = el.attributes;
-      for (let j = attrs.length - 1; j >= 0; j--) {
-        const attr = attrs[j];
-        const an = attr.name.toLowerCase();
-        const av = attr.value;
-        if (!ATTR_ALLOW.has(an)) {
-          el.removeAttribute(attr.name);
-          continue;
-        }
-        if (an === "href" || an === "src") {
-          if (!isSafeHttpUrl(av)) {
-            el.removeAttribute(attr.name);
-            continue;
-          }
-          if (an === "href" && isHttpUrl(av)) {
-            if (!el.getAttribute("rel")) el.setAttribute("rel", "noopener noreferrer");
-            if (!el.getAttribute("target")) el.setAttribute("target", "_blank");
-          }
-        }
-      }
-    }
-    return tmp.innerHTML;
-  }
-  var ALLOW = /* @__PURE__ */ new Set([
-    "b",
-    "strong",
-    "i",
-    "em",
-    "u",
-    "span",
-    "p",
-    "br",
-    "ul",
-    "ol",
-    "li",
-    "a",
-    "code",
-    "pre",
-    "small",
-    "div",
-    // for DOCX previews (Mammoth)
-    "h1",
-    "h2",
-    "h3",
-    "h4",
-    "h5",
-    "h6",
-    "table",
-    "thead",
-    "tbody",
-    "tr",
-    "td",
-    "th",
-    "img",
-    "video",
-    "audio",
-    "source",
-    "iframe",
-    "figure",
-    "figcaption"
-  ]);
-  var ATTR_ALLOW = /* @__PURE__ */ new Set([
-    "href",
-    "target",
-    "rel",
-    "class",
-    "style",
-    "src",
-    "alt",
-    "title",
-    "aria-label",
-    "colspan",
-    "rowspan",
-    "scope",
-    "controls",
-    "autoplay",
-    "loop",
-    "muted",
-    "width",
-    "height",
-    "frameborder",
-    "allowfullscreen",
-    "allow"
-  ]);
-  function isSafeHttpUrl(u) {
-    if (!u || !u.trim()) return false;
-    const lower = u.trim().toLowerCase();
-    if (lower.startsWith("javascript:") || lower.startsWith("data:")) return false;
-    try {
-      const url = new URL(u, location.origin);
-      return ["http:", "https:", "mailto:", "tel:", "file:"].includes(url.protocol) || url.protocol === location.protocol;
-    } catch {
-      return !lower.startsWith("javascript:");
-    }
-  }
-  function isHttpUrl(u) {
-    try {
-      const url = new URL(u, location.origin);
-      return url.protocol === "http:" || url.protocol === "https:";
-    } catch {
-      return false;
-    }
-  }
-
-  // src/services/licensingService.ts
-  var POPUP_CONTAINER_ID = "dap-license-expired-popup";
-  var LicensingService = class {
-    constructor() {
-      this.licenseStatus = "valid";
-    }
-    /**
-     * Handle HTTP status codes returned from runtime API calls (e.g. 403, 429)
-     */
-    handleHttpError(status, customMessage) {
-      if (status === 403) {
-        this.licenseStatus = "expired";
-        console.warn("[DAP] Runtime API returned HTTP 403 Forbidden (License Expired or Feature Restricted).");
-        this.showLicenseExpiredPopup(
-          "License Expired",
-          customMessage || "Your subscription license has expired or access to this feature is restricted for your organization. Please contact your system administrator to renew or upgrade your plan."
-        );
-      } else if (status === 429) {
-        this.licenseStatus = "quota_exceeded";
-        console.warn("[DAP] Runtime API returned HTTP 429 Too Many Requests (Quota Exceeded).");
-        this.showLicenseExpiredPopup(
-          "Usage Limit Reached",
-          customMessage || "Your organization has reached its allowed usage limit for this period. Please contact your administrator to upgrade your tier."
-        );
-      }
-    }
-    /**
-     * Check if current license status is blocked
-     */
-    isBlocked() {
-      return this.licenseStatus === "expired" || this.licenseStatus === "quota_exceeded";
-    }
-    /**
-     * Render a premium 'License Expired' / 'Quota Exceeded' popup modal when runtime access is denied
-     */
-    showLicenseExpiredPopup(title, customMessage) {
-      if (typeof document === "undefined" || document.getElementById(POPUP_CONTAINER_ID)) {
-        return;
-      }
-      const modalTitle = title || "License Expired";
-      const defaultMsg = "Your DAP subscription license has expired or feature access is restricted. Please contact your system administrator.";
-      const messageHtml = sanitizeHtml(customMessage || defaultMsg);
-      const overlay = document.createElement("div");
-      overlay.id = POPUP_CONTAINER_ID;
-      overlay.style.cssText = `
-      position: fixed;
-      inset: 0;
-      z-index: 2147483647;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: rgba(15, 23, 42, 0.55);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      padding: 20px;
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      animation: dapLicenseFadeIn 0.3s ease-out both;
-    `;
-      const styleEl = document.createElement("style");
-      styleEl.textContent = `
-      @keyframes dapLicenseFadeIn {
-        from { opacity: 0; }
-        to   { opacity: 1; }
-      }
-      @keyframes dapLicenseScaleUp {
-        from { opacity: 0; transform: scale(0.92) translateY(10px); }
-        to   { opacity: 1; transform: scale(1) translateY(0); }
-      }
-    `;
-      const dialog = document.createElement("div");
-      dialog.style.cssText = `
-      background: #ffffff;
-      border: 1px solid #e2e8f0;
-      border-radius: 20px;
-      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0,0,0,0.05);
-      width: 100%;
-      max-width: 460px;
-      padding: 32px 28px 28px;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      text-align: center;
-      animation: dapLicenseScaleUp 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
-      color: #0f172a;
-    `;
-      dialog.innerHTML = `
-      <div style="
-        width: 56px;
-        height: 56px;
-        border-radius: 16px;
-        background: #fef2f2;
-        border: 1px solid #fecaca;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        margin-bottom: 20px;
-        color: #dc2626;
-      ">
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-          <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-        </svg>
-      </div>
-
-      <h3 style="
-        margin: 0 0 10px 0;
-        font-size: 20px;
-        font-weight: 700;
-        letter-spacing: -0.02em;
-        color: #0f172a;
-      ">${sanitizeHtml(modalTitle)}</h3>
-
-      <div style="
-        font-size: 14px;
-        line-height: 1.6;
-        color: #475569;
-        margin-bottom: 28px;
-      ">
-        ${messageHtml}
-      </div>
-
-      <button id="dap-license-close-btn" style="
-        width: 100%;
-        padding: 12px 20px;
-        border-radius: 12px;
-        background: #0ea5e9;
-        color: #ffffff;
-        border: none;
-        font-weight: 600;
-        font-size: 14px;
-        cursor: pointer;
-        transition: background 0.2s ease, transform 0.1s ease;
-        box-shadow: 0 4px 12px rgba(14, 165, 233, 0.25);
-      ">
-        Got It
-      </button>
-    `;
-      overlay.appendChild(styleEl);
-      overlay.appendChild(dialog);
-      document.body.appendChild(overlay);
-      const closeBtn = dialog.querySelector("#dap-license-close-btn");
-      if (closeBtn) {
-        closeBtn.addEventListener("click", () => {
-          if (overlay.parentNode) {
-            overlay.parentNode.removeChild(overlay);
-          }
-        });
-        closeBtn.addEventListener("mouseenter", () => {
-          closeBtn.style.background = "#0284c7";
-        });
-        closeBtn.addEventListener("mouseleave", () => {
-          closeBtn.style.background = "#0ea5e9";
-        });
-      }
-      overlay.addEventListener("click", (e) => {
-        if (e.target === overlay) {
-          if (overlay.parentNode) {
-            overlay.parentNode.removeChild(overlay);
-          }
-        }
-      });
-    }
-  };
-  var licensingService = new LicensingService();
-
   // src/http.ts
   async function http(cfg, path, opts = {}) {
     const method = (opts.method || "GET").toUpperCase();
@@ -411,9 +128,6 @@ var DAP = (function (exports) {
     }
     clearTimeout(t);
     if (!res.ok) {
-      if (res.status === 403 || res.status === 429) {
-        licensingService.handleHttpError(res.status);
-      }
       const e = new Error(`HTTP ${res.status}`);
       e.status = res.status;
       try {
@@ -880,6 +594,124 @@ var DAP = (function (exports) {
     const b = (base || "").replace(/\/+$/, "");
     const t = (tail || "").replace(/^\/+/, "");
     return `${b}/${t}`;
+  }
+
+  // src/utils/sanitize.ts
+  function sanitizeHtml(unsafe) {
+    const tmp = document.createElement("div");
+    tmp.innerHTML = unsafe || "";
+    const elements = tmp.querySelectorAll("*");
+    for (let i = 0; i < elements.length; i++) {
+      const el = elements[i];
+      const name = el.nodeName.toLowerCase();
+      if (!ALLOW.has(name)) {
+        const text = document.createTextNode(el.textContent || "");
+        const parent = el.parentNode;
+        if (parent) parent.replaceChild(text, el);
+        continue;
+      }
+      const attrs = el.attributes;
+      for (let j = attrs.length - 1; j >= 0; j--) {
+        const attr = attrs[j];
+        const an = attr.name.toLowerCase();
+        const av = attr.value;
+        if (!ATTR_ALLOW.has(an)) {
+          el.removeAttribute(attr.name);
+          continue;
+        }
+        if (an === "href" || an === "src") {
+          if (!isSafeHttpUrl(av)) {
+            el.removeAttribute(attr.name);
+            continue;
+          }
+          if (an === "href" && isHttpUrl(av)) {
+            if (!el.getAttribute("rel")) el.setAttribute("rel", "noopener noreferrer");
+            if (!el.getAttribute("target")) el.setAttribute("target", "_blank");
+          }
+        }
+      }
+    }
+    return tmp.innerHTML;
+  }
+  var ALLOW = /* @__PURE__ */ new Set([
+    "b",
+    "strong",
+    "i",
+    "em",
+    "u",
+    "span",
+    "p",
+    "br",
+    "ul",
+    "ol",
+    "li",
+    "a",
+    "code",
+    "pre",
+    "small",
+    "div",
+    // for DOCX previews (Mammoth)
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "table",
+    "thead",
+    "tbody",
+    "tr",
+    "td",
+    "th",
+    "img",
+    "video",
+    "audio",
+    "source",
+    "iframe",
+    "figure",
+    "figcaption"
+  ]);
+  var ATTR_ALLOW = /* @__PURE__ */ new Set([
+    "href",
+    "target",
+    "rel",
+    "class",
+    "style",
+    "src",
+    "alt",
+    "title",
+    "aria-label",
+    "colspan",
+    "rowspan",
+    "scope",
+    "controls",
+    "autoplay",
+    "loop",
+    "muted",
+    "width",
+    "height",
+    "frameborder",
+    "allowfullscreen",
+    "allow"
+  ]);
+  function isSafeHttpUrl(u) {
+    if (!u || !u.trim()) return false;
+    const lower = u.trim().toLowerCase();
+    if (lower.startsWith("javascript:") || lower.startsWith("data:")) return false;
+    try {
+      const url = new URL(u, location.origin);
+      return ["http:", "https:", "mailto:", "tel:", "file:"].includes(url.protocol) || url.protocol === location.protocol;
+    } catch {
+      return !lower.startsWith("javascript:");
+    }
+  }
+  function isHttpUrl(u) {
+    try {
+      const url = new URL(u, location.origin);
+      return url.protocol === "http:" || url.protocol === "https:";
+    } catch {
+      return false;
+    }
   }
 
   // src/experiences/registry.ts
@@ -2708,11 +2540,6 @@ var DAP = (function (exports) {
     async function evaluateAndRenderStep(stepIndex) {
       const step = payload.steps[stepIndex];
       if (!step) return;
-      if (licensingService.isBlocked()) {
-        licensingService.showLicenseExpiredPopup();
-        closeAll();
-        return;
-      }
       const stepId = step.stepId || `step-${stepIndex + 1}`;
       console.debug(`[DAP] Evaluating step ${stepIndex}:`, {
         stepId,
@@ -2760,11 +2587,6 @@ var DAP = (function (exports) {
     }
     async function renderStepExperience(stepIndex, step, stepId, showNavigation) {
       cleanupCurrentStep();
-      if (licensingService.isBlocked()) {
-        licensingService.showLicenseExpiredPopup();
-        closeAll();
-        return;
-      }
       console.debug(`[DAP] Rendering step ${stepIndex} (${step.kind})`);
       switch (step.kind) {
         case "modal":
@@ -7477,10 +7299,6 @@ var DAP = (function (exports) {
   }
   async function renderSurvey(flow) {
     const { payload } = flow;
-    if (licensingService.isBlocked()) {
-      licensingService.showLicenseExpiredPopup();
-      return;
-    }
     console.debug("[DAP] renderSurvey called with payload:", {
       hasHeader: !!payload.header,
       hasBody: !!payload.body,
@@ -12179,10 +11997,6 @@ var DAP = (function (exports) {
   async function renderWalkthrough(flow) {
     const { payload, id } = flow;
     const completionTracker = payload._completionTracker;
-    if (licensingService.isBlocked()) {
-      licensingService.showLicenseExpiredPopup();
-      return;
-    }
     ensureStyles8();
     let currentStepIndex = 0;
     let isActive = false;
@@ -15885,10 +15699,6 @@ var DAP = (function (exports) {
      * Execute the actual step content (UX experience)
      */
     executeStepContent(step, stepIndex) {
-      if (licensingService.isBlocked()) {
-        licensingService.showLicenseExpiredPopup();
-        return;
-      }
       if (this._state.activeFlowId) {
         this._onFlowActive?.(this._state.activeFlowId);
       }
