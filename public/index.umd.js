@@ -3445,9 +3445,10 @@ var DAP = (function (exports) {
     container.className = "dap-content-kb";
     console.debug("[DAP] Rendering KB sequence with content:", content);
     console.debug("[DAP] KB items count:", content?.items?.length || 0);
-    if (!content.items || !Array.isArray(content.items)) {
-      console.warn("[DAP] No KB items available for rendering");
-      container.innerHTML = "<p>No knowledge base items available.</p>";
+    if (!content.items || !Array.isArray(content.items) || content.items.length === 0) {
+      console.warn("[DAP] No Knowledge Base items available or feature is not licensed");
+      handleRuntimeApiResponseStatus(403);
+      container.style.display = "none";
       return container;
     }
     if (content.title) {
@@ -5314,6 +5315,12 @@ var DAP = (function (exports) {
       };
     }
     const items = content.items && Array.isArray(content.items) ? content.items : [];
+    if (items.length === 0) {
+      console.warn("[DAP] Knowledge Base feature has 0 items or feature is not licensed");
+      handleRuntimeApiResponseStatus(403);
+      wrapper.style.display = "none";
+      return wrapper;
+    }
     const head = document.createElement("div");
     head.className = "dap-kb-head";
     const headTop = document.createElement("div");
@@ -7600,6 +7607,27 @@ var DAP = (function (exports) {
       mode: payload.mode,
       type: payload.type
     });
+    if (flow.config && payload.flowId && payload.organizationId && payload.siteId) {
+      const baseUrl = getBaseUrl2(flow.config.apiurl);
+      const url = `${baseUrl}/iap-experience/organizations/${payload.organizationId}/site-collections/${payload.siteId}/userflows/${payload.flowId}/survey-responses`;
+      const hostBase = location.origin;
+      try {
+        await http(flow.config, url, {
+          method: "POST",
+          body: { validationCheckOnly: true },
+          hostBase,
+          includeHostHeader: true
+        });
+      } catch (err) {
+        if (err && err.status) {
+          const isAllowed = handleRuntimeApiResponseStatus(err.status);
+          if (!isAllowed) {
+            console.warn("[DAP] Survey module feature is not licensed (status:", err.status, ") \u2014 preventing survey render.");
+            return;
+          }
+        }
+      }
+    }
     const surveyMode = determineSurveyMode(payload);
     console.debug("[DAP] Survey mode determined:", surveyMode);
     if (surveyMode === "inline") {
